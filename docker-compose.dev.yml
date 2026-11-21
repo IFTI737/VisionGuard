@@ -1,0 +1,22 @@
+# Local PostgreSQL 16 and Redis 7 for development.  docker compose -f docker-compose.dev.yml up -d
+# Sir's docker-compose.yml only runs the app container; this file is for the databases.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: visionguard
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/initdb:/docker-entrypoint-initdb.d   # creates visionguard_test on first start
+  redis:
+    image: redis:7
+    command: ["redis-server", "--appendonly", "yes"]  # keep queues and rule state across restarts
+    ports: ["6379:6379"]
+    volumes:
+      - redisdata:/data
+volumes:
+  pgdata: {}
+  redisdata: {}
