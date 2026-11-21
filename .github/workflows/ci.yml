@@ -1,0 +1,58 @@
+# VisionGuard API - runs on every pull request and on main.
+# Fails the PR when: the app does not build, a migration and an entity disagree,
+# a down() is incomplete, a CHECK list and check-values.ts differ, the schema
+# snapshot was not updated, or a migration was added out of order.
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: visionguard_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+    env:
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_DATABASE: visionguard_ci          # must end in _ci or _test: schema:check wipes it
+      REDIS_URL: redis://localhost:6379
+      # Repository variable. Set it to "true" (Settings > Variables) after the first shared deployment.
+      MIGRATIONS_FROZEN: ${{ vars.MIGRATIONS_FROZEN || 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0                   # the order check needs main's history
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Migration order (pull requests only)
+        if: github.event_name == 'pull_request'
+        run: bash scripts/migration_order_check.sh origin/${{ github.base_ref }}
+      # Before the freeze, also compare migrated tables with src/database/schema.reference.sql.
+      - name: Schema check (migrations vs entities, down/up, snapshot)
+        run: pnpm ${{ env.MIGRATIONS_FROZEN == 'true' && 'schema:check' || 'schema:check:ref' }}
+      - run: pnpm test --passWithNoTests

@@ -1,0 +1,1019 @@
+TABLE ai_models
+  col ai_models.artifact_sha256 text
+  col ai_models.artifact_url text
+  col ai_models.code text not null
+  col ai_models.created_at timestamp with time zone not null default now()
+  col ai_models.default_conf real not null default 0.35
+  col ai_models.default_interval_ms integer not null default 1000
+  col ai_models.id uuid not null default gen_random_uuid()
+  col ai_models.input_size integer not null default 640
+  col ai_models.output_kind text not null
+  col ai_models.runtime text not null
+  col ai_models.stage smallint not null default 1
+  col ai_models.status text not null default 'active'::text
+  col ai_models.task text not null
+  col ai_models.trigger_class_code text
+  col ai_models.version text not null
+  con ai_models.chk_ai_models_default_conf CHECK (((default_conf > (0)::double precision) AND (default_conf < (1)::double precision)))
+  con ai_models.chk_ai_models_default_interval_ms CHECK ((default_interval_ms >= 100))
+  con ai_models.chk_ai_models_output_kind CHECK ((output_kind = ANY (ARRAY['boxes'::text, 'attrs'::text, 'measure'::text])))
+  con ai_models.chk_ai_models_runtime CHECK ((runtime = ANY (ARRAY['onnx_web'::text, 'onnx'::text, 'tensorrt'::text, 'openvino'::text, 'remote'::text])))
+  con ai_models.chk_ai_models_stage CHECK ((stage = ANY (ARRAY[1, 2])))
+  con ai_models.chk_ai_models_stage_trigger CHECK ((((stage = 2) = (trigger_class_code IS NOT NULL)) OR (output_kind = 'measure'::text)))
+  con ai_models.chk_ai_models_status CHECK ((status = ANY (ARRAY['planned'::text, 'active'::text, 'retired'::text])))
+  con ai_models.chk_ai_models_task CHECK ((task = ANY (ARRAY['detect'::text, 'classify'::text, 'pose'::text, 'segment'::text, 'count'::text])))
+  con ai_models.fk_ai_models_trigger_class_code FOREIGN KEY (trigger_class_code) REFERENCES object_classes(code) ON DELETE RESTRICT
+  con ai_models.pk_ai_models PRIMARY KEY (id)
+  con ai_models.uq_ai_models_code_version UNIQUE (code, version)
+  idx ai_models.pk_ai_models UNIQUE USING btree (id)
+  idx ai_models.uq_ai_models_code_version UNIQUE USING btree (code, version)
+TABLE alert_recipients
+  col alert_recipients.ack_token_hash bytea
+  col alert_recipients.acked_at timestamp with time zone
+  col alert_recipients.alert_id uuid not null
+  col alert_recipients.id uuid not null default gen_random_uuid()
+  col alert_recipients.member_id uuid not null
+  col alert_recipients.notified_at timestamp with time zone
+  col alert_recipients.seen_at timestamp with time zone
+  col alert_recipients.site_id uuid not null
+  col alert_recipients.status text not null default 'pending'::text
+  col alert_recipients.step_no smallint not null
+  con alert_recipients.chk_alert_recipients_status CHECK ((status = ANY (ARRAY['pending'::text, 'notified'::text, 'seen'::text, 'acknowledged'::text, 'unreachable'::text, 'skipped'::text])))
+  con alert_recipients.fk_alert_recipients_alert_id FOREIGN KEY (alert_id) REFERENCES alerts(id) ON DELETE CASCADE
+  con alert_recipients.fk_alert_recipients_member_id FOREIGN KEY (site_id, member_id) REFERENCES site_members(site_id, id) ON DELETE CASCADE
+  con alert_recipients.pk_alert_recipients PRIMARY KEY (id)
+  con alert_recipients.uq_alert_recipients_alert_id_member_id UNIQUE (alert_id, member_id)
+  idx alert_recipients.idx_alert_recipients_member USING btree (member_id, status)
+  idx alert_recipients.pk_alert_recipients UNIQUE USING btree (id)
+  idx alert_recipients.uq_alert_recipients_alert_id_member_id UNIQUE USING btree (alert_id, member_id)
+  idx alert_recipients.uq_alert_recipients_token UNIQUE USING btree (ack_token_hash) WHERE (ack_token_hash IS NOT NULL)
+TABLE alerts
+  col alerts.acknowledged_at timestamp with time zone
+  col alerts.acknowledged_by uuid
+  col alerts.acknowledged_via text
+  col alerts.body text
+  col alerts.client_request_id text
+  col alerts.closed_at timestamp with time zone
+  col alerts.created_at timestamp with time zone not null default now()
+  col alerts.current_step smallint not null default 0
+  col alerts.id uuid not null default gen_random_uuid()
+  col alerts.policy_id uuid
+  col alerts.risk_score smallint
+  col alerts.sender_member_id uuid
+  col alerts.severity text not null
+  col alerts.site_id uuid not null
+  col alerts.source text not null
+  col alerts.status text not null default 'active'::text
+  col alerts.title text not null
+  col alerts.updated_at timestamp with time zone not null default now()
+  con alerts.chk_alerts_acknowledged_via CHECK ((acknowledged_via = ANY (ARRAY['app'::text, 'telegram'::text, 'webpush'::text, 'call'::text])))
+  con alerts.chk_alerts_manual_sender CHECK (((source <> 'manual'::text) OR (sender_member_id IS NOT NULL) OR (status <> 'active'::text)))
+  con alerts.chk_alerts_risk_score CHECK (((risk_score >= 0) AND (risk_score <= 100)))
+  con alerts.chk_alerts_severity CHECK ((severity = ANY (ARRAY['low'::text, 'medium'::text, 'high'::text, 'critical'::text])))
+  con alerts.chk_alerts_source CHECK ((source = ANY (ARRAY['system'::text, 'manual'::text, 'test'::text])))
+  con alerts.chk_alerts_status CHECK ((status = ANY (ARRAY['active'::text, 'acknowledged'::text, 'exhausted'::text, 'cancelled'::text])))
+  con alerts.fk_alerts_acknowledged_by FOREIGN KEY (site_id, acknowledged_by) REFERENCES site_members(site_id, id) ON DELETE SET NULL (acknowledged_by)
+  con alerts.fk_alerts_policy_id FOREIGN KEY (site_id, policy_id) REFERENCES escalation_policies(site_id, id) ON DELETE SET NULL (policy_id)
+  con alerts.fk_alerts_sender_member_id FOREIGN KEY (site_id, sender_member_id) REFERENCES site_members(site_id, id) ON DELETE SET NULL (sender_member_id)
+  con alerts.fk_alerts_site_id FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE
+  con alerts.pk_alerts PRIMARY KEY (id)
+  con alerts.uq_alerts_site_id_id UNIQUE (site_id, id)
+  idx alerts.idx_alerts_site_active USING btree (site_id) WHERE (status = 'active'::text)
+  idx alerts.idx_alerts_site_time USING btree (site_id, created_at DESC)
+  idx alerts.pk_alerts UNIQUE USING btree (id)
+  idx alerts.uq_alerts_idempotency UNIQUE USING btree (site_id, sender_member_id, client_request_id) WHERE (client_request_id IS NOT NULL)
+  idx alerts.uq_alerts_site_id_id UNIQUE USING btree (site_id, id)
+TABLE areas
+  col areas.created_at timestamp with time zone not null default now()
+  col areas.id uuid not null default gen_random_uuid()
+  col areas.name text not null
+  col areas.site_id uuid not null
+  col areas.sort_order smallint not null default 0
+  con areas.fk_areas_site_id FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE
+  con areas.pk_areas PRIMARY KEY (id)
+  con areas.uq_areas_site_id_id UNIQUE (site_id, id)
+  con areas.uq_areas_site_id_name UNIQUE (site_id, name)
+  idx areas.pk_areas UNIQUE USING btree (id)
+  idx areas.uq_areas_site_id_id UNIQUE USING btree (site_id, id)
+  idx areas.uq_areas_site_id_name UNIQUE USING btree (site_id, name)
+TABLE audit_logs
+  col audit_logs.action text not null
+  col audit_logs.actor_id uuid
+  col audit_logs.actor_kind text not null
+  col audit_logs.created_at timestamp with time zone not null default now()
+  col audit_logs.data jsonb not null default '{}'::jsonb
+  col audit_logs.entity_id uuid
+  col audit_logs.entity_type text
+  col audit_logs.id bigint not null identity
+  col audit_logs.ip inet
+  col audit_logs.site_id uuid
+  con audit_logs.chk_audit_logs_actor_kind CHECK ((actor_kind = ANY (ARRAY['user'::text, 'staff'::text, 'device'::text, 'system'::text])))
+  con audit_logs.pk_audit_logs PRIMARY KEY (id)
+  idx audit_logs.idx_audit_logs_created USING btree (created_at)
+  idx audit_logs.idx_audit_logs_entity USING btree (entity_type, entity_id)
+  idx audit_logs.idx_audit_logs_site USING btree (site_id, created_at DESC)
+  idx audit_logs.pk_audit_logs UNIQUE USING btree (id)
+TABLE auth_codes
+  col auth_codes.attempts smallint not null default 0
+  col auth_codes.channel text not null
+  col auth_codes.code_hash bytea not null
+  col auth_codes.consumed_at timestamp with time zone
+  col auth_codes.created_at timestamp with time zone not null default now()
+  col auth_codes.expires_at timestamp with time zone not null
+  col auth_codes.id uuid not null default gen_random_uuid()
+  col auth_codes.max_attempts smallint not null default 5
+  col auth_codes.purpose text not null
+  col auth_codes.target text not null
+  col auth_codes.user_id uuid not null
+  con auth_codes.chk_auth_codes_channel CHECK ((channel = ANY (ARRAY['email'::text, 'sms'::text])))
+  con auth_codes.chk_auth_codes_purpose CHECK ((purpose = ANY (ARRAY['email_verify'::text, 'phone_verify'::text, 'password_reset'::text, 'login_2fa'::text])))
+  con auth_codes.fk_auth_codes_user_id FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  con auth_codes.pk_auth_codes PRIMARY KEY (id)
+  idx auth_codes.pk_auth_codes UNIQUE USING btree (id)
+  idx auth_codes.uq_auth_codes_active UNIQUE USING btree (user_id, purpose) WHERE (consumed_at IS NULL)
+TABLE cameras
+  col cameras.area_id uuid not null
+  col cameras.created_at timestamp with time zone not null default now()
+  col cameras.deleted_at timestamp with time zone
+  col cameras.device_id uuid
+  col cameras.id uuid not null default gen_random_uuid()
+  col cameras.last_seen_at timestamp with time zone
+  col cameras.name text not null
+  col cameras.recording_mode text not null default 'incident_only'::text
+  col cameras.site_id uuid not null
+  col cameras.source_kind text not null
+  col cameras.source_ref text
+  col cameras.status text not null default 'pending'::text
+  col cameras.updated_at timestamp with time zone not null default now()
+  con cameras.chk_cameras_recording_mode CHECK ((recording_mode = ANY (ARRAY['off'::text, 'continuous'::text, 'incident_only'::text])))
+  con cameras.chk_cameras_source_kind CHECK ((source_kind = ANY (ARRAY['browser'::text, 'rtsp'::text, 'simulator'::text])))
+  con cameras.chk_cameras_status CHECK ((status = ANY (ARRAY['pending'::text, 'online'::text, 'offline'::text, 'no_signal'::text, 'tampered'::text, 'disabled'::text])))
+  con cameras.fk_cameras_area_id FOREIGN KEY (site_id, area_id) REFERENCES areas(site_id, id) ON DELETE RESTRICT
+  con cameras.fk_cameras_device_id FOREIGN KEY (site_id, device_id) REFERENCES devices(site_id, id) ON DELETE SET NULL (device_id)
+  con cameras.fk_cameras_site_id FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE
+  con cameras.pk_cameras PRIMARY KEY (id)
+  con cameras.uq_cameras_site_id_id UNIQUE (site_id, id)
+  idx cameras.idx_cameras_area USING btree (area_id) WHERE (deleted_at IS NULL)
+  idx cameras.idx_cameras_device USING btree (device_id) WHERE (deleted_at IS NULL)
+  idx cameras.pk_cameras UNIQUE USING btree (id)
+  idx cameras.uq_cameras_name UNIQUE USING btree (site_id, name) WHERE (deleted_at IS NULL)
+  idx cameras.uq_cameras_site_id_id UNIQUE USING btree (site_id, id)
+TABLE conversation_members
+  col conversation_members.conversation_id uuid not null
+  col conversation_members.last_read_id bigint not null default 0
+  col conversation_members.member_id uuid not null
+  col conversation_members.muted boolean not null default false
+  con conversation_members.fk_conversation_members_conversation_id FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+  con conversation_members.fk_conversation_members_member_id FOREIGN KEY (member_id) REFERENCES site_members(id) ON DELETE CASCADE
+  con conversation_members.pk_conversation_members PRIMARY KEY (conversation_id, member_id)
+  idx conversation_members.pk_conversation_members UNIQUE USING btree (conversation_id, member_id)
+TABLE conversations
+  col conversations.alert_id uuid
+  col conversations.created_at timestamp with time zone not null default now()
+  col conversations.id uuid not null default gen_random_uuid()
+  col conversations.kind text not null
+  col conversations.last_message_at timestamp with time zone
+  col conversations.site_id uuid not null
+  con conversations.chk_conversations_alert_link CHECK (((kind = 'alert'::text) = (alert_id IS NOT NULL)))
+  con conversations.chk_conversations_kind CHECK ((kind = ANY (ARRAY['team'::text, 'alert'::text])))
+  con conversations.fk_conversations_alert_id FOREIGN KEY (alert_id) REFERENCES alerts(id) ON DELETE CASCADE
+  con conversations.fk_conversations_site_id FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE
+  con conversations.pk_conversations PRIMARY KEY (id)
+  con conversations.uq_conversations_alert_id UNIQUE (alert_id)
+  idx conversations.pk_conversations UNIQUE USING btree (id)
+  idx conversations.uq_conversations_alert_id UNIQUE USING btree (alert_id)
+  idx conversations.uq_conversations_team UNIQUE USING btree (site_id) WHERE (kind = 'team'::text)
+TABLE delivery_attempts
+  col delivery_attempts.attempt_no smallint not null default 1
+  col delivery_attempts.channel text not null
+  col delivery_attempts.completed_at timestamp with time zone
+  col delivery_attempts.created_at timestamp with time zone not null default now()
+  col delivery_attempts.endpoint_id uuid
+  col delivery_attempts.error text
+  col delivery_attempts.id uuid not null default gen_random_uuid()
+  col delivery_attempts.meta jsonb not null default '{}'::jsonb
+  col delivery_attempts.provider text
+  col delivery_attempts.provider_ref text
+  col delivery_attempts.recipient_id uuid not null
+  col delivery_attempts.status text not null default 'queued'::text
+  con delivery_attempts.chk_delivery_attempts_channel CHECK ((channel = ANY (ARRAY['inapp'::text, 'webpush'::text, 'telegram'::text, 'call'::text])))
+  con delivery_attempts.chk_delivery_attempts_status CHECK ((status = ANY (ARRAY['queued'::text, 'sent'::text, 'delivered'::text, 'failed'::text, 'ringing'::text, 'answered'::text, 'no_answer'::text, 'busy'::text, 'cancelled'::text])))
+  con delivery_attempts.fk_delivery_attempts_endpoint_id FOREIGN KEY (endpoint_id) REFERENCES notification_endpoints(id) ON DELETE SET NULL
+  con delivery_attempts.fk_delivery_attempts_recipient_id FOREIGN KEY (recipient_id) REFERENCES alert_recipients(id) ON DELETE CASCADE
+  con delivery_attempts.pk_delivery_attempts PRIMARY KEY (id)
+  con delivery_attempts.uq_delivery_attempts_recipient_id_channel_attempt_no UNIQUE (recipient_id, channel, attempt_no)
+  idx delivery_attempts.pk_delivery_attempts UNIQUE USING btree (id)
+  idx delivery_attempts.uq_delivery_attempts_provider UNIQUE USING btree (provider, provider_ref) WHERE (provider_ref IS NOT NULL)
+  idx delivery_attempts.uq_delivery_attempts_recipient_id_channel_attempt_no UNIQUE USING btree (recipient_id, channel, attempt_no)
+TABLE detection_feedback
+  col detection_feedback.corrected jsonb
+  col detection_feedback.created_at timestamp with time zone not null default now()
+  col detection_feedback.created_by uuid
+  col detection_feedback.detections jsonb not null default '[]'::jsonb
+  col detection_feedback.export_status text not null default 'pending'::text
+  col detection_feedback.exported_at timestamp with time zone
+  col detection_feedback.id uuid not null default gen_random_uuid()
+  col detection_feedback.incident_id uuid
+  col detection_feedback.label text not null
+  col detection_feedback.model_code text
+  col detection_feedback.model_version text
+  col detection_feedback.reason text
+  col detection_feedback.site_id uuid not null
+  col detection_feedback.snapshot_id uuid
+  con detection_feedback.chk_detection_feedback_export_status CHECK ((export_status = ANY (ARRAY['pending'::text, 'exported'::text, 'excluded'::text])))
+  con detection_feedback.chk_detection_feedback_label CHECK ((label = ANY (ARRAY['false_positive'::text, 'true_positive'::text, 'wrong_class'::text, 'missed'::text])))
+  con detection_feedback.fk_detection_feedback_created_by FOREIGN KEY (created_by) REFERENCES site_members(id) ON DELETE SET NULL
+  con detection_feedback.fk_detection_feedback_incident_id FOREIGN KEY (incident_id) REFERENCES incidents(id) ON DELETE SET NULL
+  con detection_feedback.fk_detection_feedback_site_id FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE
+  con detection_feedback.fk_detection_feedback_snapshot_id FOREIGN KEY (snapshot_id) REFERENCES snapshots(id) ON DELETE SET NULL
+  con detection_feedback.pk_detection_feedback PRIMARY KEY (id)
+  idx detection_feedback.idx_detection_feedback_export USING btree (export_status, created_at)
+  idx detection_feedback.pk_detection_feedback UNIQUE USING btree (id)
+TABLE device_credentials
+  col device_credentials.created_at timestamp with time zone not null default now()
+  col device_credentials.created_by uuid
+  col device_credentials.device_id uuid not null
+  col device_credentials.expires_at timestamp with time zone
+  col device_credentials.id uuid not null default gen_random_uuid()
+  col device_credentials.key_hash bytea not null
+  col device_credentials.key_prefix text not null
+  col device_credentials.label text
+  col device_credentials.last_used_at timestamp with time zone
+  col device_credentials.revoked_at timestamp with time zone
+  con device_credentials.fk_device_credentials_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+  con device_credentials.fk_device_credentials_device_id FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+  con device_credentials.pk_device_credentials PRIMARY KEY (id)
+  con device_credentials.uq_device_credentials_key_prefix UNIQUE (key_prefix)
+  idx device_credentials.idx_device_credentials_device USING btree (device_id) WHERE (revoked_at IS NULL)
+  idx device_credentials.pk_device_credentials UNIQUE USING btree (id)
+  idx device_credentials.uq_device_credentials_key_prefix UNIQUE USING btree (key_prefix)
+TABLE devices
+  col devices.capabilities jsonb not null default '{}'::jsonb
+  col devices.config_version integer not null default 1
+  col devices.created_at timestamp with time zone not null default now()
+  col devices.created_by uuid
+  col devices.id uuid not null default gen_random_uuid()
+  col devices.kind text not null
+  col devices.last_ip inet
+  col devices.last_seen_at timestamp with time zone
+  col devices.name text not null
+  col devices.site_id uuid not null
+  col devices.status text not null default 'pending'::text
+  col devices.sw_version text
+  col devices.time_mode text not null default 'wall'::text
+  con devices.chk_devices_event_time_simulator_only CHECK (((time_mode = 'wall'::text) OR (kind = 'simulator'::text)))
+  con devices.chk_devices_kind CHECK ((kind = ANY (ARRAY['browser'::text, 'simulator'::text, 'gateway'::text, 'cloud_worker'::text])))
+  con devices.chk_devices_status CHECK ((status = ANY (ARRAY['pending'::text, 'active'::text, 'disabled'::text])))
+  con devices.chk_devices_time_mode CHECK ((time_mode = ANY (ARRAY['wall'::text, 'event'::text])))
+  con devices.fk_devices_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+  con devices.fk_devices_site_id FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE
+  con devices.pk_devices PRIMARY KEY (id)
+  con devices.uq_devices_site_id_id UNIQUE (site_id, id)
+  idx devices.idx_devices_site USING btree (site_id)
+  idx devices.pk_devices UNIQUE USING btree (id)
+  idx devices.uq_devices_site_id_id UNIQUE USING btree (site_id, id)
+TABLE escalation_policies
+  col escalation_policies.created_at timestamp with time zone not null default now()
+  col escalation_policies.id uuid not null default gen_random_uuid()
+  col escalation_policies.is_default boolean not null default false
+  col escalation_policies.min_severity text not null default 'low'::text
+  col escalation_policies.name text not null
+  col escalation_policies.repeat_count smallint not null default 0
+  col escalation_policies.site_id uuid not null
+  con escalation_policies.chk_escalation_policies_min_severity CHECK ((min_severity = ANY (ARRAY['low'::text, 'medium'::text, 'high'::text, 'critical'::text])))
+  con escalation_policies.chk_escalation_policies_repeat_count CHECK (((repeat_count >= 0) AND (repeat_count <= 3)))
+  con escalation_policies.fk_escalation_policies_site_id FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE
+  con escalation_policies.pk_escalation_policies PRIMARY KEY (id)
+  con escalation_policies.uq_escalation_policies_site_id_id UNIQUE (site_id, id)
+  idx escalation_policies.pk_escalation_policies UNIQUE USING btree (id)
+  idx escalation_policies.uq_escalation_policies_default UNIQUE USING btree (site_id) WHERE is_default
+  idx escalation_policies.uq_escalation_policies_site_id_id UNIQUE USING btree (site_id, id)
+TABLE escalation_steps
+  col escalation_steps.audience text not null
+  col escalation_steps.call_count smallint not null default 1
+  col escalation_steps.channels text[] not null
+  col escalation_steps.id uuid not null default gen_random_uuid()
+  col escalation_steps.policy_id uuid not null
+  col escalation_steps.ring_timeout_s smallint not null default 30
+  col escalation_steps.role text
+  col escalation_steps.step_no smallint not null
+  col escalation_steps.wait_s integer not null
+  con escalation_steps.chk_escalation_steps_audience CHECK ((audience = ANY (ARRAY['all_members'::text, 'role'::text, 'call_list'::text])))
+  con escalation_steps.chk_escalation_steps_call_count CHECK (((call_count >= 1) AND (call_count <= 5)))
+  con escalation_steps.chk_escalation_steps_channels CHECK (((channels <@ ARRAY['inapp'::text, 'webpush'::text, 'telegram'::text, 'call'::text]) AND (cardinality(channels) > 0)))
+  con escalation_steps.chk_escalation_steps_ring_timeout_s CHECK (((ring_timeout_s >= 10) AND (ring_timeout_s <= 60)))
+  con escalation_steps.chk_escalation_steps_role CHECK ((role = ANY (ARRAY['owner'::text, 'manager'::text, 'guard'::text, 'viewer'::text, 'contact'::text])))
+  con escalation_steps.chk_escalation_steps_role_audience CHECK (((audience = 'role'::text) = (role IS NOT NULL)))
+  con escalation_steps.chk_escalation_steps_step_no CHECK ((step_no >= 1))
+  con escalation_steps.chk_escalation_steps_wait_s CHECK ((wait_s >= 0))
+  con escalation_steps.fk_escalation_steps_policy_id FOREIGN KEY (policy_id) REFERENCES escalation_policies(id) ON DELETE CASCADE
+  con escalation_steps.pk_escalation_steps PRIMARY KEY (id)
+  con escalation_steps.uq_escalation_steps_policy_id_step_no UNIQUE (policy_id, step_no)
+  idx escalation_steps.pk_escalation_steps UNIQUE USING btree (id)
+  idx escalation_steps.uq_escalation_steps_policy_id_step_no UNIQUE USING btree (policy_id, step_no)
+TABLE export_jobs
+  col export_jobs.created_at timestamp with time zone not null default now()
+  col export_jobs.error text
+  col export_jobs.expires_at timestamp with time zone
+  col export_jobs.finished_at timestamp with time zone
+  col export_jobs.format text not null
+  col export_jobs.id uuid not null default gen_random_uuid()
+  col export_jobs.media_id uuid
+  col export_jobs.params jsonb not null default '{}'::jsonb
+  col export_jobs.report_type text not null
+  col export_jobs.requested_by uuid
+  col export_jobs.site_id uuid not null
+  col export_jobs.status text not null default 'queued'::text
+  con export_jobs.chk_export_jobs_format CHECK ((format = ANY (ARRAY['csv'::text, 'pdf'::text])))
+  con export_jobs.chk_export_jobs_report_type CHECK ((report_type = ANY (ARRAY['incidents'::text, 'counts'::text, 'compliance'::text, 'alerts'::text, 'invoices'::text])))
+  con export_jobs.chk_export_jobs_status CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'ready'::text, 'failed'::text])))
+  con export_jobs.fk_export_jobs_media_id FOREIGN KEY (media_id) REFERENCES media(id) ON DELETE SET NULL
+  con export_jobs.fk_export_jobs_requested_by FOREIGN KEY (requested_by) REFERENCES site_members(id) ON DELETE SET NULL
+  con export_jobs.fk_export_jobs_site_id FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE
+  con export_jobs.pk_export_jobs PRIMARY KEY (id)
+  idx export_jobs.idx_export_jobs_site USING btree (site_id, created_at DESC)
+  idx export_jobs.pk_export_jobs UNIQUE USING btree (id)
+TABLE incident_events
+  col incident_events.actor_member_id uuid
+  col incident_events.created_at timestamp with time zone not null default now()
+  col incident_events.data jsonb not null default '{}'::jsonb
+  col incident_events.id bigint not null identity
+  col incident_events.incident_id uuid not null
+  col incident_events.type text not null
+  con incident_events.chk_incident_events_type CHECK ((type = ANY (ARRAY['created'::text, 'recurred'::text, 'severity_changed'::text, 'alert_sent'::text, 'acknowledged'::text, 'resolved'::text, 'false_alarm'::text, 'reopened'::text, 'condition_cleared'::text, 'note'::text, 'clip_ready'::text])))
+  con incident_events.fk_incident_events_actor_member_id FOREIGN KEY (actor_member_id) REFERENCES site_members(id) ON DELETE SET NULL
+  con incident_events.fk_incident_events_incident_id FOREIGN KEY (incident_id) REFERENCES incidents(id) ON DELETE CASCADE
+  con incident_events.pk_incident_events PRIMARY KEY (id)
+  idx incident_events.idx_incident_events_incident USING btree (incident_id, created_at)
+  idx incident_events.pk_incident_events UNIQUE USING btree (id)
+TABLE incident_segments
+  col incident_segments.incident_id uuid not null
+  col incident_segments.segment_id uuid not null
+  con incident_segments.fk_incident_segments_incident_id FOREIGN KEY (incident_id) REFERENCES incidents(id) ON DELETE CASCADE
+  con incident_segments.fk_incident_segments_segment_id FOREIGN KEY (segment_id) REFERENCES recording_segments(id) ON DELETE RESTRICT
+  con incident_segments.pk_incident_segments PRIMARY KEY (incident_id, segment_id)
+  idx incident_segments.idx_incident_segments_segment USING btree (segment_id)
+  idx incident_segments.pk_incident_segments UNIQUE USING btree (incident_id, segment_id)
+TABLE incidents
+  col incidents.acknowledged_at timestamp with time zone
+  col incidents.acknowledged_by uuid
+  col incidents.alert_id uuid
+  col incidents.camera_id uuid
+  col incidents.clip_from timestamp with time zone
+  col incidents.clip_to timestamp with time zone
+  col incidents.condition_active boolean not null default true
+  col incidents.cover_snapshot_id uuid
+  col incidents.created_at timestamp with time zone not null default now()
+  col incidents.dedup_key text not null
+  col incidents.ended_at timestamp with time zone
+  col incidents.expected jsonb not null default '{}'::jsonb
+  col incidents.false_alarm_reason text
+  col incidents.id uuid not null default gen_random_uuid()
+  col incidents.kind text not null
+  col incidents.last_seen_at timestamp with time zone not null
+  col incidents.observed jsonb not null default '{}'::jsonb
+  col incidents.recurrence integer not null default 1
+  col incidents.resolution_note text
+  col incidents.resolved_at timestamp with time zone
+  col incidents.resolved_by uuid
+  col incidents.risk_score smallint not null
+  col incidents.rule_id uuid
+  col incidents.search_tsv tsvector default to_tsvector('simple'::regconfig, ((title || ' '::text) || COALESCE(resolution_note, ''::text))) generated
+  col incidents.severity text not null
+  col incidents.site_id uuid not null
+  col incidents.started_at timestamp with time zone not null
+  col incidents.status text not null default 'open'::text
+  col incidents.title text not null
+  col incidents.updated_at timestamp with time zone not null default now()
+  col incidents.zone_id uuid
+  con incidents.chk_incidents_clip_window CHECK (((clip_to IS NULL) OR (clip_to > clip_from)))
+  con incidents.chk_incidents_false_alarm_reason CHECK ((false_alarm_reason = ANY (ARRAY['wrong_object'::text, 'authorized_person'::text, 'animal'::text, 'light_or_shadow'::text, 'rule_too_sensitive'::text, 'other'::text])))
+  con incidents.chk_incidents_false_alarm_status CHECK (((status = 'false_alarm'::text) = (false_alarm_reason IS NOT NULL)))
+  con incidents.chk_incidents_risk_score CHECK (((risk_score >= 0) AND (risk_score <= 100)))
+  con incidents.chk_incidents_severity CHECK ((severity = ANY (ARRAY['low'::text, 'medium'::text, 'high'::text, 'critical'::text])))
+  con incidents.chk_incidents_status CHECK ((status = ANY (ARRAY['open'::text, 'acknowledged'::text, 'resolved'::text, 'false_alarm'::text])))
+  con incidents.fk_incidents_acknowledged_by FOREIGN KEY (site_id, acknowledged_by) REFERENCES site_members(site_id, id) ON DELETE SET NULL (acknowledged_by)
+  con incidents.fk_incidents_alert_id FOREIGN KEY (site_id, alert_id) REFERENCES alerts(site_id, id) ON DELETE SET NULL (alert_id)
+  con incidents.fk_incidents_camera_id FOREIGN KEY (site_id, camera_id) REFERENCES cameras(site_id, id) ON DELETE SET NULL (camera_id)
+  con incidents.fk_incidents_cover_snapshot_id FOREIGN KEY (cover_snapshot_id) REFERENCES snapshots(id) ON DELETE SET NULL
+  con incidents.fk_incidents_resolved_by FOREIGN KEY (site_id, resolved_by) REFERENCES site_members(site_id, id) ON DELETE SET NULL (resolved_by)
+  con incidents.fk_incidents_rule_id FOREIGN KEY (site_id, rule_id) REFERENCES rules(site_id, id) ON DELETE SET NULL (rule_id)
+  con incidents.fk_incidents_site_id FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE
+  con incidents.fk_incidents_zone_id FOREIGN KEY (site_id, zone_id) REFERENCES zones(site_id, id) ON DELETE SET NULL (zone_id)
+  con incidents.pk_incidents PRIMARY KEY (id)
+  con incidents.uq_incidents_site_id_id UNIQUE (site_id, id)
+  idx incidents.idx_incidents_alert USING btree (alert_id) WHERE (alert_id IS NOT NULL)
+  idx incidents.idx_incidents_camera_clip USING btree (camera_id, clip_from, clip_to) WHERE (clip_from IS NOT NULL)
+  idx incidents.idx_incidents_search USING gin (search_tsv)
+  idx incidents.idx_incidents_site_status USING btree (site_id, status, started_at DESC)
+  idx incidents.idx_incidents_site_time USING btree (site_id, started_at DESC)
+  idx incidents.idx_incidents_zone_time USING btree (zone_id, started_at DESC)
+  idx incidents.pk_incidents UNIQUE USING btree (id)
+  idx incidents.uq_incidents_open_dedup UNIQUE USING btree (dedup_key) WHERE (status = ANY (ARRAY['open'::text, 'acknowledged'::text]))
+  idx incidents.uq_incidents_site_id_id UNIQUE USING btree (site_id, id)
+TABLE invoice_lines
+  col invoice_lines.amount_minor integer not null
+  col invoice_lines.description text not null
+  col invoice_lines.id uuid not null default gen_random_uuid()
+  col invoice_lines.invoice_id uuid not null
+  col invoice_lines.subscription_item_id uuid
+  con invoice_lines.fk_invoice_lines_invoice_id FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE
+  con invoice_lines.fk_invoice_lines_subscription_item_id FOREIGN KEY (subscription_item_id) REFERENCES subscription_items(id) ON DELETE SET NULL
+  con invoice_lines.pk_invoice_lines PRIMARY KEY (id)
+  idx invoice_lines.idx_invoice_lines_invoice USING btree (invoice_id)
+  idx invoice_lines.pk_invoice_lines UNIQUE USING btree (id)
+TABLE invoices
+  col invoices.billing_name text not null
+  col invoices.created_at timestamp with time zone not null default now()
+  col invoices.currency character(3) not null default 'BDT'::bpchar
+  col invoices.due_at timestamp with time zone
+  col invoices.id uuid not null default gen_random_uuid()
+  col invoices.issued_at timestamp with time zone
+  col invoices.number text not null
+  col invoices.paid_at timestamp with time zone
+  col invoices.period_end timestamp with time zone not null
+  col invoices.period_start timestamp with time zone not null
+  col invoices.site_id uuid
+  col invoices.status text not null default 'draft'::text
+  col invoices.subscription_id uuid
+  col invoices.total_minor integer not null default 0
+  con invoices.chk_invoices_status CHECK ((status = ANY (ARRAY['draft'::text, 'open'::text, 'paid'::text, 'void'::text])))
+  con invoices.chk_invoices_total_minor CHECK ((total_minor >= 0))
+  con invoices.fk_invoices_site_id FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE SET NULL
+  con invoices.fk_invoices_subscription_id FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE SET NULL
+  con invoices.pk_invoices PRIMARY KEY (id)
+  con invoices.uq_invoices_number UNIQUE (number)
+  con invoices.uq_invoices_subscription_id_period_start UNIQUE (subscription_id, period_start)
+  idx invoices.idx_invoices_open USING btree (due_at) WHERE (status = 'open'::text)
+  idx invoices.idx_invoices_paid USING btree (paid_at) WHERE (status = 'paid'::text)
+  idx invoices.idx_invoices_site USING btree (site_id, created_at DESC)
+  idx invoices.pk_invoices UNIQUE USING btree (id)
+  idx invoices.uq_invoices_number UNIQUE USING btree (number)
+  idx invoices.uq_invoices_subscription_id_period_start UNIQUE USING btree (subscription_id, period_start)
+TABLE live_view_sessions
+  col live_view_sessions.camera_id uuid not null
+  col live_view_sessions.connected_at timestamp with time zone
+  col live_view_sessions.end_reason text
+  col live_view_sessions.ended_at timestamp with time zone
+  col live_view_sessions.id uuid not null default gen_random_uuid()
+  col live_view_sessions.site_id uuid not null
+  col live_view_sessions.started_at timestamp with time zone not null default now()
+  col live_view_sessions.transport text
+  col live_view_sessions.viewer_user_id uuid not null
+  con live_view_sessions.chk_live_view_sessions_end_reason CHECK ((end_reason = ANY (ARRAY['viewer_left'::text, 'timeout'::text, 'device_offline'::text, 'limit'::text, 'error'::text])))
+  con live_view_sessions.chk_live_view_sessions_transport CHECK ((transport = ANY (ARRAY['p2p'::text, 'relay'::text, 'sfu'::text])))
+  con live_view_sessions.fk_live_view_sessions_camera_id FOREIGN KEY (site_id, camera_id) REFERENCES cameras(site_id, id) ON DELETE CASCADE
+  con live_view_sessions.fk_live_view_sessions_viewer_user_id FOREIGN KEY (viewer_user_id) REFERENCES users(id) ON DELETE CASCADE
+  con live_view_sessions.pk_live_view_sessions PRIMARY KEY (id)
+  idx live_view_sessions.idx_live_view_sessions_active USING btree (camera_id) WHERE (ended_at IS NULL)
+  idx live_view_sessions.pk_live_view_sessions UNIQUE USING btree (id)
+TABLE media
+  col media.bytes bigint not null
+  col media.created_at timestamp with time zone not null default now()
+  col media.expires_at timestamp with time zone
+  col media.id uuid not null default gen_random_uuid()
+  col media.kind text not null
+  col media.mime text not null
+  col media.object_key text not null
+  col media.site_id uuid
+  col media.status text not null default 'ready'::text
+  col media.storage text not null
+  con media.chk_media_bytes CHECK ((bytes >= 0))
+  con media.chk_media_kind CHECK ((kind = ANY (ARRAY['image'::text, 'video'::text, 'file'::text])))
+  con media.chk_media_status CHECK ((status = ANY (ARRAY['pending'::text, 'ready'::text, 'purging'::text])))
+  con media.chk_media_storage CHECK ((storage = ANY (ARRAY['local'::text, 'r2'::text])))
+  con media.fk_media_site_id FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE
+  con media.pk_media PRIMARY KEY (id)
+  con media.uq_media_object_key UNIQUE (object_key)
+  idx media.idx_media_expiry USING btree (expires_at) WHERE (expires_at IS NOT NULL)
+  idx media.idx_media_pending USING btree (created_at) WHERE (status <> 'ready'::text)
+  idx media.pk_media UNIQUE USING btree (id)
+  idx media.uq_media_object_key UNIQUE USING btree (object_key)
+TABLE member_area_scopes
+  col member_area_scopes.area_id uuid not null
+  col member_area_scopes.member_id uuid not null
+  col member_area_scopes.site_id uuid not null
+  con member_area_scopes.fk_member_area_scopes_area_id FOREIGN KEY (site_id, area_id) REFERENCES areas(site_id, id) ON DELETE CASCADE
+  con member_area_scopes.fk_member_area_scopes_member_id FOREIGN KEY (site_id, member_id) REFERENCES site_members(site_id, id) ON DELETE CASCADE
+  con member_area_scopes.pk_member_area_scopes PRIMARY KEY (member_id, area_id)
+  idx member_area_scopes.idx_member_area_scopes_area USING btree (area_id)
+  idx member_area_scopes.pk_member_area_scopes UNIQUE USING btree (member_id, area_id)
+TABLE messages
+  col messages.body text not null
+  col messages.client_msg_id text
+  col messages.conversation_id uuid not null
+  col messages.created_at timestamp with time zone not null default now()
+  col messages.deleted_at timestamp with time zone
+  col messages.edited_at timestamp with time zone
+  col messages.id bigint not null identity
+  col messages.media_id uuid
+  col messages.sender_member_id uuid
+  con messages.chk_messages_body CHECK (((char_length(body) >= 1) AND (char_length(body) <= 4000)))
+  con messages.fk_messages_conversation_id FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+  con messages.fk_messages_media_id FOREIGN KEY (media_id) REFERENCES media(id) ON DELETE SET NULL
+  con messages.fk_messages_sender_member_id FOREIGN KEY (sender_member_id) REFERENCES site_members(id) ON DELETE SET NULL
+  con messages.pk_messages PRIMARY KEY (id)
+  idx messages.idx_messages_conversation USING btree (conversation_id, id DESC)
+  idx messages.pk_messages UNIQUE USING btree (id)
+  idx messages.uq_messages_idempotency UNIQUE USING btree (conversation_id, sender_member_id, client_msg_id) WHERE (client_msg_id IS NOT NULL)
+TABLE model_assignments
+  col model_assignments.active_when text not null default 'always'::text
+  col model_assignments.camera_id uuid not null
+  col model_assignments.conf_overrides jsonb not null default '{}'::jsonb
+  col model_assignments.created_at timestamp with time zone not null default now()
+  col model_assignments.enabled boolean not null default true
+  col model_assignments.frame_interval_ms integer not null default 1000
+  col model_assignments.id uuid not null default gen_random_uuid()
+  col model_assignments.model_id uuid not null
+  col model_assignments.site_id uuid not null
+  con model_assignments.chk_model_assignments_active_when CHECK ((active_when = ANY (ARRAY['always'::text, 'day'::text, 'night'::text, 'lowlight'::text])))
+  con model_assignments.chk_model_assignments_frame_interval_ms CHECK ((frame_interval_ms >= 100))
+  con model_assignments.fk_model_assignments_camera_id FOREIGN KEY (site_id, camera_id) REFERENCES cameras(site_id, id) ON DELETE CASCADE
+  con model_assignments.fk_model_assignments_model_id FOREIGN KEY (model_id) REFERENCES ai_models(id) ON DELETE RESTRICT
+  con model_assignments.pk_model_assignments PRIMARY KEY (id)
+  con model_assignments.uq_model_assignments_camera_id_model_id_active_when UNIQUE (camera_id, model_id, active_when)
+  idx model_assignments.pk_model_assignments UNIQUE USING btree (id)
+  idx model_assignments.uq_model_assignments_camera_id_model_id_active_when UNIQUE USING btree (camera_id, model_id, active_when)
+TABLE model_classes
+  col model_classes.class_code text not null
+  col model_classes.class_index smallint not null
+  col model_classes.default_conf real
+  col model_classes.model_id uuid not null
+  con model_classes.chk_model_classes_default_conf CHECK (((default_conf > (0)::double precision) AND (default_conf < (1)::double precision)))
+  con model_classes.fk_model_classes_class_code FOREIGN KEY (class_code) REFERENCES object_classes(code) ON DELETE RESTRICT
+  con model_classes.fk_model_classes_model_id FOREIGN KEY (model_id) REFERENCES ai_models(id) ON DELETE CASCADE
+  con model_classes.pk_model_classes PRIMARY KEY (model_id, class_code)
+  con model_classes.uq_model_classes_model_id_class_index UNIQUE (model_id, class_index)
+  idx model_classes.pk_model_classes UNIQUE USING btree (model_id, class_code)
+  idx model_classes.uq_model_classes_model_id_class_index UNIQUE USING btree (model_id, class_index)
+TABLE notification_endpoints
+  col notification_endpoints.address text not null
+  col notification_endpoints.created_at timestamp with time zone not null default now()
+  col notification_endpoints.fail_count smallint not null default 0
+  col notification_endpoints.id uuid not null default gen_random_uuid()
+  col notification_endpoints.keys jsonb
+  col notification_endpoints.kind text not null
+  col notification_endpoints.label text
+  col notification_endpoints.last_success_at timestamp with time zone
+  col notification_endpoints.revoked_at timestamp with time zone
+  col notification_endpoints.user_id uuid not null
+  col notification_endpoints.verified_at timestamp with time zone
+  con notification_endpoints.chk_notification_endpoints_kind CHECK ((kind = ANY (ARRAY['telegram'::text, 'webpush'::text])))
+  con notification_endpoints.chk_notification_endpoints_webpush_keys CHECK (((kind <> 'webpush'::text) OR (keys IS NOT NULL)))
+  con notification_endpoints.fk_notification_endpoints_user_id FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  con notification_endpoints.pk_notification_endpoints PRIMARY KEY (id)
+  con notification_endpoints.uq_notification_endpoints_kind_address UNIQUE (kind, address)
+  idx notification_endpoints.idx_notification_endpoints_user USING btree (user_id) WHERE (revoked_at IS NULL)
+  idx notification_endpoints.pk_notification_endpoints UNIQUE USING btree (id)
+  idx notification_endpoints.uq_notification_endpoints_kind_address UNIQUE USING btree (kind, address)
+TABLE object_classes
+  col object_classes.code text not null
+  col object_classes.kind text not null
+  col object_classes.name_bn text not null
+  col object_classes.name_en text not null
+  col object_classes.parent_code text
+  con object_classes.chk_object_classes_kind CHECK ((kind = ANY (ARRAY['object'::text, 'attribute'::text, 'measure'::text])))
+  con object_classes.fk_object_classes_parent_code FOREIGN KEY (parent_code) REFERENCES object_classes(code) ON DELETE SET NULL
+  con object_classes.pk_object_classes PRIMARY KEY (code)
+  idx object_classes.pk_object_classes UNIQUE USING btree (code)
+TABLE pack_models
+  col pack_models.model_id uuid not null
+  col pack_models.pack_id uuid not null
+  col pack_models.required boolean not null default true
+  con pack_models.fk_pack_models_model_id FOREIGN KEY (model_id) REFERENCES ai_models(id) ON DELETE RESTRICT
+  con pack_models.fk_pack_models_pack_id FOREIGN KEY (pack_id) REFERENCES packs(id) ON DELETE CASCADE
+  con pack_models.pk_pack_models PRIMARY KEY (pack_id, model_id)
+  idx pack_models.pk_pack_models UNIQUE USING btree (pack_id, model_id)
+TABLE packs
+  col packs.addon_price_minor integer not null default 0
+  col packs.code text not null
+  col packs.created_at timestamp with time zone not null default now()
+  col packs.custom_site_id uuid
+  col packs.description text
+  col packs.id uuid not null default gen_random_uuid()
+  col packs.is_default boolean not null default false
+  col packs.manifest jsonb not null default '{}'::jsonb
+  col packs.name text not null
+  col packs.status text not null default 'active'::text
+  con packs.chk_packs_addon_price_minor CHECK ((addon_price_minor >= 0))
+  con packs.chk_packs_status CHECK ((status = ANY (ARRAY['draft'::text, 'active'::text, 'retired'::text])))
+  con packs.fk_packs_custom_site_id FOREIGN KEY (custom_site_id) REFERENCES sites(id) ON DELETE CASCADE
+  con packs.pk_packs PRIMARY KEY (id)
+  con packs.uq_packs_code UNIQUE (code)
+  idx packs.pk_packs UNIQUE USING btree (id)
+  idx packs.uq_packs_code UNIQUE USING btree (code)
+TABLE payments
+  col payments.amount_minor integer not null
+  col payments.confirmed_at timestamp with time zone
+  col payments.created_at timestamp with time zone not null default now()
+  col payments.id uuid not null default gen_random_uuid()
+  col payments.invoice_id uuid not null
+  col payments.provider text not null
+  col payments.provider_txn_id text not null
+  col payments.raw jsonb not null default '{}'::jsonb
+  col payments.status text not null default 'initiated'::text
+  con payments.chk_payments_amount_minor CHECK ((amount_minor > 0))
+  con payments.chk_payments_provider CHECK ((provider = ANY (ARRAY['sandbox'::text, 'bkash'::text, 'sslcommerz'::text, 'manual'::text])))
+  con payments.chk_payments_status CHECK ((status = ANY (ARRAY['initiated'::text, 'succeeded'::text, 'failed'::text, 'refunded'::text])))
+  con payments.fk_payments_invoice_id FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE RESTRICT
+  con payments.pk_payments PRIMARY KEY (id)
+  con payments.uq_payments_provider_provider_txn_id UNIQUE (provider, provider_txn_id)
+  idx payments.idx_payments_invoice USING btree (invoice_id)
+  idx payments.pk_payments UNIQUE USING btree (id)
+  idx payments.uq_payments_provider_provider_txn_id UNIQUE USING btree (provider, provider_txn_id)
+TABLE plans
+  col plans.active boolean not null default true
+  col plans.code text not null
+  col plans.created_at timestamp with time zone not null default now()
+  col plans.currency character(3) not null default 'BDT'::bpchar
+  col plans.id uuid not null default gen_random_uuid()
+  col plans.incident_retention_days smallint not null default 180
+  col plans.is_public boolean not null default true
+  col plans.max_cameras smallint not null
+  col plans.max_members smallint
+  col plans.name text not null
+  col plans.pack_slots smallint not null default 0
+  col plans.price_minor integer not null
+  col plans.recording_days smallint not null
+  con plans.chk_plans_price_minor CHECK ((price_minor >= 0))
+  con plans.pk_plans PRIMARY KEY (id)
+  con plans.uq_plans_code UNIQUE (code)
+  idx plans.pk_plans UNIQUE USING btree (id)
+  idx plans.uq_plans_code UNIQUE USING btree (code)
+TABLE recording_segments
+  col recording_segments.camera_id uuid not null
+  col recording_segments.codec text
+  col recording_segments.container text not null
+  col recording_segments.created_at timestamp with time zone not null default now()
+  col recording_segments.ended_at timestamp with time zone not null
+  col recording_segments.id uuid not null default gen_random_uuid()
+  col recording_segments.init_media_id uuid
+  col recording_segments.media_id uuid
+  col recording_segments.site_id uuid not null
+  col recording_segments.started_at timestamp with time zone not null
+  col recording_segments.stored text not null default 'cloud'::text
+  con recording_segments.chk_recording_segments_cloud_media CHECK (((stored = 'cloud'::text) = (media_id IS NOT NULL)))
+  con recording_segments.chk_recording_segments_container CHECK ((container = ANY (ARRAY['webm'::text, 'mp4'::text, 'fmp4'::text])))
+  con recording_segments.chk_recording_segments_stored CHECK ((stored = ANY (ARRAY['cloud'::text, 'edge'::text])))
+  con recording_segments.chk_recording_segments_time_order CHECK ((ended_at > started_at))
+  con recording_segments.fk_recording_segments_camera_id FOREIGN KEY (site_id, camera_id) REFERENCES cameras(site_id, id) ON DELETE CASCADE
+  con recording_segments.fk_recording_segments_init_media_id FOREIGN KEY (init_media_id) REFERENCES media(id) ON DELETE RESTRICT
+  con recording_segments.fk_recording_segments_media_id FOREIGN KEY (media_id) REFERENCES media(id) ON DELETE RESTRICT
+  con recording_segments.pk_recording_segments PRIMARY KEY (id)
+  con recording_segments.uq_recording_segments_camera_id_started_at UNIQUE (camera_id, started_at)
+  con recording_segments.uq_recording_segments_media_id UNIQUE (media_id)
+  idx recording_segments.idx_recording_segments_purge USING btree (ended_at) WHERE (stored = 'cloud'::text)
+  idx recording_segments.idx_recording_segments_range USING btree (camera_id, ended_at)
+  idx recording_segments.pk_recording_segments UNIQUE USING btree (id)
+  idx recording_segments.uq_recording_segments_camera_id_started_at UNIQUE USING btree (camera_id, started_at)
+  idx recording_segments.uq_recording_segments_media_id UNIQUE USING btree (media_id)
+TABLE refresh_tokens
+  col refresh_tokens.created_at timestamp with time zone not null default now()
+  col refresh_tokens.expires_at timestamp with time zone not null
+  col refresh_tokens.family_id uuid not null
+  col refresh_tokens.id uuid not null
+  col refresh_tokens.ip inet
+  col refresh_tokens.last_used_at timestamp with time zone
+  col refresh_tokens.replaced_by uuid
+  col refresh_tokens.revoke_reason text
+  col refresh_tokens.revoked_at timestamp with time zone
+  col refresh_tokens.token_hash bytea not null
+  col refresh_tokens.user_agent text
+  col refresh_tokens.user_id uuid not null
+  con refresh_tokens.chk_refresh_tokens_revoke_reason CHECK ((revoke_reason = ANY (ARRAY['logout'::text, 'rotated'::text, 'reuse_detected'::text, 'password_changed'::text, 'admin'::text, 'logout_all'::text])))
+  con refresh_tokens.chk_refresh_tokens_revoked CHECK (((revoked_at IS NULL) = (revoke_reason IS NULL)))
+  con refresh_tokens.fk_refresh_tokens_replaced_by FOREIGN KEY (replaced_by) REFERENCES refresh_tokens(id) ON DELETE SET NULL
+  con refresh_tokens.fk_refresh_tokens_user_id FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  con refresh_tokens.pk_refresh_tokens PRIMARY KEY (id)
+  idx refresh_tokens.idx_refresh_tokens_expiry USING btree (expires_at)
+  idx refresh_tokens.idx_refresh_tokens_family USING btree (family_id)
+  idx refresh_tokens.idx_refresh_tokens_user_active USING btree (user_id) WHERE (revoked_at IS NULL)
+  idx refresh_tokens.pk_refresh_tokens UNIQUE USING btree (id)
+TABLE rule_templates
+  col rule_templates.auto_provision boolean not null default false
+  col rule_templates.code text not null
+  col rule_templates.default_clear_s integer not null default 30
+  col rule_templates.default_cooldown_s integer not null default 300
+  col rule_templates.default_params jsonb not null
+  col rule_templates.default_schedule jsonb
+  col rule_templates.default_severity text not null
+  col rule_templates.default_sustain_s integer not null default 10
+  col rule_templates.description text
+  col rule_templates.i18n jsonb not null default '{}'::jsonb
+  col rule_templates.id uuid not null default gen_random_uuid()
+  col rule_templates.kind text not null
+  col rule_templates.name text not null
+  col rule_templates.pack_id uuid not null
+  col rule_templates.param_schema jsonb not null
+  col rule_templates.required_classes text[] not null default '{}'::text[]
+  col rule_templates.status text not null default 'active'::text
+  col rule_templates.zone_kinds text[] not null default '{}'::text[]
+  con rule_templates.chk_rule_templates_default_clear_s CHECK ((default_clear_s >= 0))
+  con rule_templates.chk_rule_templates_default_cooldown_s CHECK ((default_cooldown_s >= 0))
+  con rule_templates.chk_rule_templates_default_severity CHECK ((default_severity = ANY (ARRAY['low'::text, 'medium'::text, 'high'::text, 'critical'::text])))
+  con rule_templates.chk_rule_templates_default_sustain_s CHECK ((default_sustain_s >= 0))
+  con rule_templates.chk_rule_templates_kind CHECK ((kind = ANY (ARRAY['presence'::text, 'count_range'::text, 'attribute_missing'::text, 'proximity'::text, 'measure_threshold'::text, 'delta'::text, 'anomaly'::text, 'device_health'::text])))
+  con rule_templates.chk_rule_templates_status CHECK ((status = ANY (ARRAY['draft'::text, 'active'::text, 'retired'::text])))
+  con rule_templates.fk_rule_templates_pack_id FOREIGN KEY (pack_id) REFERENCES packs(id) ON DELETE CASCADE
+  con rule_templates.pk_rule_templates PRIMARY KEY (id)
+  con rule_templates.uq_rule_templates_pack_id_code UNIQUE (pack_id, code)
+  idx rule_templates.pk_rule_templates UNIQUE USING btree (id)
+  idx rule_templates.uq_rule_templates_pack_id_code UNIQUE USING btree (pack_id, code)
+TABLE rules
+  col rules.camera_id uuid
+  col rules.clear_s integer not null
+  col rules.cooldown_s integer not null
+  col rules.created_at timestamp with time zone not null default now()
+  col rules.created_by uuid
+  col rules.deleted_at timestamp with time zone
+  col rules.enabled boolean not null default true
+  col rules.id uuid not null default gen_random_uuid()
+  col rules.muted_until timestamp with time zone
+  col rules.name text not null
+  col rules.params jsonb not null
+  col rules.schedule jsonb
+  col rules.severity text not null
+  col rules.site_id uuid not null
+  col rules.sustain_s integer not null
+  col rules.template_id uuid not null
+  col rules.updated_at timestamp with time zone not null default now()
+  col rules.version integer not null default 1
+  col rules.zone_id uuid
+  con rules.chk_rules_clear_s CHECK ((clear_s >= 0))
+  con rules.chk_rules_cooldown_s CHECK ((cooldown_s >= 0))
+  con rules.chk_rules_one_target CHECK ((num_nonnulls(zone_id, camera_id) = 1))
+  con rules.chk_rules_severity CHECK ((severity = ANY (ARRAY['low'::text, 'medium'::text, 'high'::text, 'critical'::text])))
+  con rules.chk_rules_sustain_s CHECK ((sustain_s >= 0))
+  con rules.fk_rules_camera_id FOREIGN KEY (site_id, camera_id) REFERENCES cameras(site_id, id) ON DELETE CASCADE
+  con rules.fk_rules_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+  con rules.fk_rules_site_id FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE
+  con rules.fk_rules_template_id FOREIGN KEY (template_id) REFERENCES rule_templates(id) ON DELETE RESTRICT
+  con rules.fk_rules_zone_id FOREIGN KEY (site_id, zone_id) REFERENCES zones(site_id, id) ON DELETE CASCADE
+  con rules.pk_rules PRIMARY KEY (id)
+  con rules.uq_rules_site_id_id UNIQUE (site_id, id)
+  idx rules.idx_rules_camera USING btree (camera_id) WHERE ((deleted_at IS NULL) AND enabled)
+  idx rules.idx_rules_site USING btree (site_id) WHERE (deleted_at IS NULL)
+  idx rules.idx_rules_zone USING btree (zone_id) WHERE ((deleted_at IS NULL) AND enabled)
+  idx rules.pk_rules UNIQUE USING btree (id)
+  idx rules.uq_rules_site_id_id UNIQUE USING btree (site_id, id)
+TABLE site_members
+  col site_members.all_areas boolean not null default true
+  col site_members.call_priority smallint
+  col site_members.created_at timestamp with time zone not null default now()
+  col site_members.display_name text not null
+  col site_members.id uuid not null default gen_random_uuid()
+  col site_members.invite_token_hash bytea
+  col site_members.invited_at timestamp with time zone
+  col site_members.invited_by uuid
+  col site_members.joined_at timestamp with time zone
+  col site_members.notify_prefs jsonb not null default '{}'::jsonb
+  col site_members.permissions text[] not null default '{}'::text[]
+  col site_members.phone text
+  col site_members.role text not null
+  col site_members.site_id uuid not null
+  col site_members.status text not null default 'active'::text
+  col site_members.updated_at timestamp with time zone not null default now()
+  col site_members.user_id uuid
+  con site_members.chk_site_members_call_priority CHECK ((call_priority > 0))
+  con site_members.chk_site_members_contact_no_user CHECK (((role <> 'contact'::text) OR (user_id IS NULL)))
+  con site_members.chk_site_members_owner_has_user CHECK (((role <> 'owner'::text) OR (user_id IS NOT NULL)))
+  con site_members.chk_site_members_role CHECK ((role = ANY (ARRAY['owner'::text, 'manager'::text, 'guard'::text, 'viewer'::text, 'contact'::text])))
+  con site_members.chk_site_members_status CHECK ((status = ANY (ARRAY['invited'::text, 'active'::text, 'removed'::text])))
+  con site_members.chk_site_members_user_or_phone CHECK (((user_id IS NOT NULL) OR (phone IS NOT NULL)))
+  con site_members.fk_site_members_invited_by FOREIGN KEY (invited_by) REFERENCES site_members(id) ON DELETE SET NULL
+  con site_members.fk_site_members_site_id FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE
+  con site_members.fk_site_members_user_id FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  con site_members.pk_site_members PRIMARY KEY (id)
+  con site_members.uq_site_members_site_id_id UNIQUE (site_id, id)
+  idx site_members.idx_site_members_by_user USING btree (user_id) WHERE (status = 'active'::text)
+  idx site_members.pk_site_members UNIQUE USING btree (id)
+  idx site_members.uq_site_members_call UNIQUE USING btree (site_id, call_priority) WHERE ((call_priority IS NOT NULL) AND (status = 'active'::text))
+  idx site_members.uq_site_members_one_owner UNIQUE USING btree (site_id) WHERE ((role = 'owner'::text) AND (status = 'active'::text))
+  idx site_members.uq_site_members_phone UNIQUE USING btree (site_id, phone) WHERE ((phone IS NOT NULL) AND (status <> 'removed'::text))
+  idx site_members.uq_site_members_site_id_id UNIQUE USING btree (site_id, id)
+  idx site_members.uq_site_members_user UNIQUE USING btree (site_id, user_id) WHERE ((user_id IS NOT NULL) AND (status <> 'removed'::text))
+TABLE sites
+  col sites.address text
+  col sites.created_at timestamp with time zone not null default now()
+  col sites.created_by uuid
+  col sites.deleted_at timestamp with time zone
+  col sites.digest_time time without time zone not null default '07:00:00'::time without time zone
+  col sites.id uuid not null default gen_random_uuid()
+  col sites.kind text not null
+  col sites.mode text not null default 'armed'::text
+  col sites.name text not null
+  col sites.paused_until timestamp with time zone
+  col sites.sensitivity smallint not null default 2
+  col sites.share_training_data boolean not null default false
+  col sites.status text not null default 'active'::text
+  col sites.timezone text not null default 'Asia/Dhaka'::text
+  col sites.updated_at timestamp with time zone not null default now()
+  con sites.chk_sites_kind CHECK ((kind = ANY (ARRAY['home'::text, 'farm'::text, 'construction'::text, 'shop'::text, 'workplace'::text, 'other'::text])))
+  con sites.chk_sites_mode CHECK ((mode = ANY (ARRAY['armed'::text, 'paused'::text])))
+  con sites.chk_sites_paused_until CHECK (((mode = 'paused'::text) = (paused_until IS NOT NULL)))
+  con sites.chk_sites_sensitivity CHECK (((sensitivity >= 1) AND (sensitivity <= 3)))
+  con sites.chk_sites_status CHECK ((status = ANY (ARRAY['active'::text, 'suspended'::text, 'deleted'::text])))
+  con sites.fk_sites_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+  con sites.pk_sites PRIMARY KEY (id)
+  idx sites.idx_sites_name_trgm USING gin (name gin_trgm_ops)
+  idx sites.idx_sites_status USING btree (status) WHERE (status <> 'active'::text)
+  idx sites.pk_sites UNIQUE USING btree (id)
+TABLE snapshots
+  col snapshots.camera_id uuid not null
+  col snapshots.captured_at timestamp with time zone not null
+  col snapshots.detections jsonb not null default '[]'::jsonb
+  col snapshots.frame_h integer
+  col snapshots.frame_w integer
+  col snapshots.id uuid not null default gen_random_uuid()
+  col snapshots.incident_id uuid
+  col snapshots.media_id uuid not null
+  col snapshots.model_code text
+  col snapshots.site_id uuid not null
+  col snapshots.trigger text not null
+  con snapshots.chk_snapshots_trigger CHECK ((trigger = ANY (ARRAY['periodic'::text, 'incident'::text, 'manual'::text, 'tamper'::text])))
+  con snapshots.fk_snapshots_camera_id FOREIGN KEY (site_id, camera_id) REFERENCES cameras(site_id, id) ON DELETE CASCADE
+  con snapshots.fk_snapshots_incident_id FOREIGN KEY (incident_id) REFERENCES incidents(id) ON DELETE SET NULL
+  con snapshots.fk_snapshots_media_id FOREIGN KEY (media_id) REFERENCES media(id) ON DELETE RESTRICT
+  con snapshots.pk_snapshots PRIMARY KEY (id)
+  con snapshots.uq_snapshots_media_id UNIQUE (media_id)
+  idx snapshots.idx_snapshots_camera_time USING btree (camera_id, captured_at DESC)
+  idx snapshots.idx_snapshots_incident USING btree (incident_id) WHERE (incident_id IS NOT NULL)
+  idx snapshots.pk_snapshots UNIQUE USING btree (id)
+  idx snapshots.uq_snapshots_media_id UNIQUE USING btree (media_id)
+TABLE subscription_items
+  col subscription_items.ended_at timestamp with time zone
+  col subscription_items.id uuid not null default gen_random_uuid()
+  col subscription_items.kind text not null
+  col subscription_items.pack_id uuid not null
+  col subscription_items.started_at timestamp with time zone not null default now()
+  col subscription_items.subscription_id uuid not null
+  col subscription_items.unit_price_minor integer not null default 0
+  con subscription_items.chk_subscription_items_included_free CHECK (((kind <> 'included'::text) OR (unit_price_minor = 0)))
+  con subscription_items.chk_subscription_items_kind CHECK ((kind = ANY (ARRAY['included'::text, 'addon'::text, 'custom'::text])))
+  con subscription_items.chk_subscription_items_unit_price_minor CHECK ((unit_price_minor >= 0))
+  con subscription_items.fk_subscription_items_pack_id FOREIGN KEY (pack_id) REFERENCES packs(id) ON DELETE RESTRICT
+  con subscription_items.fk_subscription_items_subscription_id FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE
+  con subscription_items.pk_subscription_items PRIMARY KEY (id)
+  idx subscription_items.pk_subscription_items UNIQUE USING btree (id)
+  idx subscription_items.uq_subscription_items_active UNIQUE USING btree (subscription_id, pack_id) WHERE (ended_at IS NULL)
+TABLE subscriptions
+  col subscriptions.cancel_at_period_end boolean not null default false
+  col subscriptions.created_at timestamp with time zone not null default now()
+  col subscriptions.current_period_end timestamp with time zone not null
+  col subscriptions.current_period_start timestamp with time zone not null
+  col subscriptions.grace_until timestamp with time zone
+  col subscriptions.id uuid not null default gen_random_uuid()
+  col subscriptions.plan_id uuid not null
+  col subscriptions.site_id uuid not null
+  col subscriptions.status text not null
+  col subscriptions.trial_ends_at timestamp with time zone
+  col subscriptions.updated_at timestamp with time zone not null default now()
+  con subscriptions.chk_subscriptions_period_order CHECK ((current_period_end > current_period_start))
+  con subscriptions.chk_subscriptions_status CHECK ((status = ANY (ARRAY['trialing'::text, 'active'::text, 'past_due'::text, 'cancelled'::text])))
+  con subscriptions.fk_subscriptions_plan_id FOREIGN KEY (plan_id) REFERENCES plans(id) ON DELETE RESTRICT
+  con subscriptions.fk_subscriptions_site_id FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE
+  con subscriptions.pk_subscriptions PRIMARY KEY (id)
+  con subscriptions.uq_subscriptions_site_id UNIQUE (site_id)
+  idx subscriptions.idx_subscriptions_renewal USING btree (current_period_end) WHERE (status = ANY (ARRAY['trialing'::text, 'active'::text, 'past_due'::text]))
+  idx subscriptions.pk_subscriptions UNIQUE USING btree (id)
+  idx subscriptions.uq_subscriptions_site_id UNIQUE USING btree (site_id)
+TABLE support_tickets
+  col support_tickets.assigned_to uuid
+  col support_tickets.category text not null
+  col support_tickets.created_at timestamp with time zone not null default now()
+  col support_tickets.delivered_pack_id uuid
+  col support_tickets.first_response_at timestamp with time zone
+  col support_tickets.id uuid not null default gen_random_uuid()
+  col support_tickets.number bigint not null identity
+  col support_tickets.priority text not null default 'normal'::text
+  col support_tickets.quoted_price_minor integer
+  col support_tickets.requester_user_id uuid
+  col support_tickets.resolved_at timestamp with time zone
+  col support_tickets.site_id uuid
+  col support_tickets.status text not null default 'open'::text
+  col support_tickets.subject text not null
+  col support_tickets.updated_at timestamp with time zone not null default now()
+  con support_tickets.chk_support_tickets_category CHECK ((category = ANY (ARRAY['complaint'::text, 'bug'::text, 'billing'::text, 'false_alarm'::text, 'feature_request'::text, 'other'::text])))
+  con support_tickets.chk_support_tickets_priority CHECK ((priority = ANY (ARRAY['low'::text, 'normal'::text, 'high'::text, 'urgent'::text])))
+  con support_tickets.chk_support_tickets_quoted_price_minor CHECK ((quoted_price_minor >= 0))
+  con support_tickets.chk_support_tickets_status CHECK ((status = ANY (ARRAY['open'::text, 'in_progress'::text, 'waiting_customer'::text, 'resolved'::text, 'closed'::text])))
+  con support_tickets.fk_support_tickets_assigned_to FOREIGN KEY (assigned_to) REFERENCES users(id) ON DELETE SET NULL
+  con support_tickets.fk_support_tickets_delivered_pack_id FOREIGN KEY (delivered_pack_id) REFERENCES packs(id) ON DELETE SET NULL
+  con support_tickets.fk_support_tickets_requester_user_id FOREIGN KEY (requester_user_id) REFERENCES users(id) ON DELETE SET NULL
+  con support_tickets.fk_support_tickets_site_id FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE SET NULL
+  con support_tickets.pk_support_tickets PRIMARY KEY (id)
+  con support_tickets.uq_support_tickets_number UNIQUE (number)
+  idx support_tickets.idx_support_tickets_assignee USING btree (assigned_to) WHERE (status = ANY (ARRAY['open'::text, 'in_progress'::text, 'waiting_customer'::text]))
+  idx support_tickets.idx_support_tickets_queue USING btree (status, priority, created_at) WHERE (status = ANY (ARRAY['open'::text, 'in_progress'::text, 'waiting_customer'::text]))
+  idx support_tickets.idx_support_tickets_requester USING btree (requester_user_id, created_at DESC)
+  idx support_tickets.idx_support_tickets_subject_trgm USING gin (subject gin_trgm_ops)
+  idx support_tickets.pk_support_tickets UNIQUE USING btree (id)
+  idx support_tickets.uq_support_tickets_number UNIQUE USING btree (number)
+TABLE ticket_messages
+  col ticket_messages.body text not null
+  col ticket_messages.created_at timestamp with time zone not null default now()
+  col ticket_messages.id bigint not null identity
+  col ticket_messages.is_internal boolean not null default false
+  col ticket_messages.media_id uuid
+  col ticket_messages.sender_user_id uuid
+  col ticket_messages.ticket_id uuid not null
+  con ticket_messages.chk_ticket_messages_body CHECK (((char_length(body) >= 1) AND (char_length(body) <= 8000)))
+  con ticket_messages.fk_ticket_messages_media_id FOREIGN KEY (media_id) REFERENCES media(id) ON DELETE SET NULL
+  con ticket_messages.fk_ticket_messages_sender_user_id FOREIGN KEY (sender_user_id) REFERENCES users(id) ON DELETE SET NULL
+  con ticket_messages.fk_ticket_messages_ticket_id FOREIGN KEY (ticket_id) REFERENCES support_tickets(id) ON DELETE CASCADE
+  con ticket_messages.pk_ticket_messages PRIMARY KEY (id)
+  idx ticket_messages.idx_ticket_messages_ticket USING btree (ticket_id, id)
+  idx ticket_messages.pk_ticket_messages UNIQUE USING btree (id)
+TABLE users
+  col users.created_at timestamp with time zone not null default now()
+  col users.email text not null
+  col users.email_verified_at timestamp with time zone
+  col users.id uuid not null default gen_random_uuid()
+  col users.last_login_at timestamp with time zone
+  col users.locale text not null default 'bn'::text
+  col users.name text not null
+  col users.password_hash text not null
+  col users.phone_number text
+  col users.phone_verified_at timestamp with time zone
+  col users.platform_role text not null default 'customer'::text
+  col users.status text not null default 'active'::text
+  col users.token_version integer not null default 0
+  col users.two_factor_enabled boolean not null default false
+  col users.updated_at timestamp with time zone not null default now()
+  con users.chk_users_email_lower CHECK ((email = lower(email)))
+  con users.chk_users_locale CHECK ((locale = ANY (ARRAY['bn'::text, 'en'::text])))
+  con users.chk_users_platform_role CHECK ((platform_role = ANY (ARRAY['customer'::text, 'support'::text, 'admin'::text])))
+  con users.chk_users_status CHECK ((status = ANY (ARRAY['active'::text, 'disabled'::text])))
+  con users.pk_users PRIMARY KEY (id)
+  idx users.idx_users_name_trgm USING gin (name gin_trgm_ops)
+  idx users.idx_users_staff USING btree (platform_role) WHERE (platform_role <> 'customer'::text)
+  idx users.pk_users UNIQUE USING btree (id)
+  idx users.uq_users_email UNIQUE USING btree (email)
+  idx users.uq_users_phone_number UNIQUE USING btree (phone_number) WHERE (phone_number IS NOT NULL)
+TABLE zone_baselines
+  col zone_baselines.hour_of_week smallint not null
+  col zone_baselines.mad real not null
+  col zone_baselines.mean real not null
+  col zone_baselines.median real not null
+  col zone_baselines.metric_key text not null
+  col zone_baselines.n_weeks smallint not null
+  col zone_baselines.std real not null
+  col zone_baselines.updated_at timestamp with time zone not null default now()
+  col zone_baselines.zone_id uuid not null
+  con zone_baselines.chk_zone_baselines_hour_of_week CHECK (((hour_of_week >= 0) AND (hour_of_week <= 167)))
+  con zone_baselines.fk_zone_baselines_zone_id FOREIGN KEY (zone_id) REFERENCES zones(id) ON DELETE CASCADE
+  con zone_baselines.pk_zone_baselines PRIMARY KEY (zone_id, metric_key, hour_of_week)
+  idx zone_baselines.pk_zone_baselines UNIQUE USING btree (zone_id, metric_key, hour_of_week)
+TABLE zone_metric_hours
+  col zone_metric_hours.bucket timestamp with time zone not null
+  col zone_metric_hours.max real not null
+  col zone_metric_hours.metric_key text not null
+  col zone_metric_hours.min real not null
+  col zone_metric_hours.n integer not null
+  col zone_metric_hours.site_id uuid not null
+  col zone_metric_hours.sum double precision not null
+  col zone_metric_hours.sumsq double precision not null
+  col zone_metric_hours.zone_id uuid not null
+  con zone_metric_hours.fk_zone_metric_hours_zone_id FOREIGN KEY (site_id, zone_id) REFERENCES zones(site_id, id) ON DELETE CASCADE
+  con zone_metric_hours.pk_zone_metric_hours PRIMARY KEY (zone_id, metric_key, bucket)
+  idx zone_metric_hours.idx_zone_metric_hours_site USING btree (site_id, bucket)
+  idx zone_metric_hours.pk_zone_metric_hours UNIQUE USING btree (zone_id, metric_key, bucket)
+TABLE zone_metric_minutes
+  col zone_metric_minutes.bucket timestamp with time zone not null
+  col zone_metric_minutes.max real not null
+  col zone_metric_minutes.metric_key text not null
+  col zone_metric_minutes.min real not null
+  col zone_metric_minutes.n smallint not null
+  col zone_metric_minutes.site_id uuid not null
+  col zone_metric_minutes.sum double precision not null
+  col zone_metric_minutes.sumsq double precision not null
+  col zone_metric_minutes.zone_id uuid not null
+  con zone_metric_minutes.fk_zone_metric_minutes_zone_id FOREIGN KEY (site_id, zone_id) REFERENCES zones(site_id, id) ON DELETE CASCADE
+  con zone_metric_minutes.pk_zone_metric_minutes PRIMARY KEY (zone_id, metric_key, bucket)
+  idx zone_metric_minutes.pk_zone_metric_minutes CREATE UNIQUE INDEX pk_zone_metric_minutes ON ONLY public.zone_metric_minutes USING btree (zone_id, metric_key, bucket)
+TABLE zones
+  col zones.anchor text not null default 'foot'::text
+  col zones.camera_id uuid not null
+  col zones.created_at timestamp with time zone not null default now()
+  col zones.deleted_at timestamp with time zone
+  col zones.enabled boolean not null default true
+  col zones.id uuid not null default gen_random_uuid()
+  col zones.kind text not null default 'general'::text
+  col zones.min_overlap real not null default 0.35
+  col zones.muted_until timestamp with time zone
+  col zones.name text not null
+  col zones.polygon jsonb not null
+  col zones.site_id uuid not null
+  col zones.updated_at timestamp with time zone not null default now()
+  col zones.version integer not null default 1
+  con zones.chk_zones_anchor CHECK ((anchor = ANY (ARRAY['foot'::text, 'center'::text, 'overlap'::text])))
+  con zones.chk_zones_kind CHECK ((kind = ANY (ARRAY['general'::text, 'restricted'::text, 'shed'::text, 'work'::text, 'shelf'::text, 'stock'::text, 'entrance'::text, 'guard_post'::text])))
+  con zones.chk_zones_min_overlap CHECK (((min_overlap > (0)::double precision) AND (min_overlap <= (1)::double precision)))
+  con zones.chk_zones_polygon_shape CHECK (((jsonb_typeof(polygon) = 'array'::text) AND ((jsonb_array_length(polygon) >= 3) AND (jsonb_array_length(polygon) <= 32))))
+  con zones.fk_zones_camera_id FOREIGN KEY (site_id, camera_id) REFERENCES cameras(site_id, id) ON DELETE CASCADE
+  con zones.pk_zones PRIMARY KEY (id)
+  con zones.uq_zones_site_id_id UNIQUE (site_id, id)
+  idx zones.idx_zones_camera USING btree (camera_id) WHERE (deleted_at IS NULL)
+  idx zones.pk_zones UNIQUE USING btree (id)
+  idx zones.uq_zones_name UNIQUE USING btree (camera_id, name) WHERE (deleted_at IS NULL)
+  idx zones.uq_zones_site_id_id UNIQUE USING btree (site_id, id)

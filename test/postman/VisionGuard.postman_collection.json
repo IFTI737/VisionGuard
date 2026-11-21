@@ -1,0 +1,6441 @@
+{
+ "info": {
+  "_postman_id": "f44e045a-4639-41c8-9acc-872a6695d1fe",
+  "name": "VisionGuard Digital Watcher API",
+  "description": "Click through the folders from 00 to 14 in order. Each request saves the ids the next one needs (see the collection variables). Every request has tests: the Test Results tab shows PASS.\n\nBefore starting: pnpm migration:run, pnpm seed, pnpm start:dev, and choose the environment \"VisionGuard local\".\nFor the two upload requests in folder 08 set Postman Settings -> General -> Working directory to the project folder.",
+  "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+ },
+ "item": [
+  {
+   "name": "00 Server is up",
+   "description": "Start here. Proves the API, PostgreSQL and Redis are running and the catalog was seeded.",
+   "item": [
+    {
+     "name": "Health",
+     "request": {
+      "method": "GET",
+      "header": [],
+      "url": "{{baseUrl}}/healthz",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Ready (database + Redis)",
+     "request": {
+      "method": "GET",
+      "header": [],
+      "url": "{{baseUrl}}/readyz",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"database and redis ok\", () => pm.expect(json.database === \"ok\" && json.redis === \"ok\").to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Plans (public, from the seed)",
+     "request": {
+      "method": "GET",
+      "header": [],
+      "url": "{{baseUrl}}/catalog/plans",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"3 plans\", () => pm.expect(json.length === 3).to.be.true);"
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "01 Auth (JWT, argon2, refresh rotation)",
+   "description": "Module owner: Mahir. Register -> verify email -> login -> refresh. Shows validation errors, the 409, and that a reused refresh token is refused.",
+   "item": [
+    {
+     "name": "Register - validation error (lists each field)",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/auth/register",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"name\": \"A\",\n  \"email\": \"not-an-email\",\n  \"password\": \"short\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"message is a list of field errors\", () => pm.expect(Array.isArray(json.message) && json.message.length >= 3).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Register owner",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/auth/register",
+      "description": "Show in the database: SELECT email, password_hash FROM users ORDER BY created_at DESC LIMIT 1;  (an argon2id hash, never the password)",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"name\": \"Rahim Uddin\",\n  \"email\": \"{{ownerEmail}}\",\n  \"password\": \"{{ownerPassword}}\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"devCode\", json.devCode);",
+         "pm.test(\"devCode is returned in development (no mailbox needed)\", () => pm.expect(/^[0-9]{6}$/.test(json.devCode)).to.be.true);"
+        ]
+       }
+      },
+      {
+       "listen": "prerequest",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "// a fresh email on every run, so the collection can be run again and again",
+         "pm.collectionVariables.set(\"ownerEmail\", \"rahim\" + Date.now() + \"@demo.com\");",
+         "pm.collectionVariables.set(\"ownerPassword\", \"Passw0rd!demo\");",
+         "pm.collectionVariables.unset(\"simBase\");"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Register same email again - 409",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/auth/register",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"name\": \"Rahim Uddin\",\n  \"email\": \"{{ownerEmail}}\",\n  \"password\": \"{{ownerPassword}}\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 409\", () => pm.response.to.have.status(409));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Login with a wrong password - 401",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/auth/login",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"email\": \"{{ownerEmail}}\",\n  \"password\": \"wrong-password\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 401\", () => pm.response.to.have.status(401));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Verify email with a wrong code - 400",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/auth/verify-email",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"email\": \"{{ownerEmail}}\",\n  \"code\": \"000000\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 400\", () => pm.response.to.have.status(400));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Verify email",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/auth/verify-email",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"email\": \"{{ownerEmail}}\",\n  \"code\": \"{{devCode}}\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Login",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/auth/login",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"email\": \"{{ownerEmail}}\",\n  \"password\": \"{{ownerPassword}}\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"accessToken\", json.accessToken);",
+         "pm.collectionVariables.set(\"refreshToken\", json.refreshToken);",
+         "pm.test(\"access and refresh token\", () => pm.expect(!!json.accessToken && !!json.refreshToken).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Me",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/me",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"email verified\", () => pm.expect(json.emailVerified === true).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Me without a token - 401",
+     "request": {
+      "method": "GET",
+      "header": [],
+      "url": "{{baseUrl}}/me",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 401\", () => pm.response.to.have.status(401));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Refresh (the token is replaced)",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/auth/refresh",
+      "description": "Show: SELECT revoke_reason, replaced_by FROM refresh_tokens ORDER BY created_at;  The old row is \"rotated\".",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"accessToken\", json.accessToken);",
+         "pm.collectionVariables.set(\"refreshToken\", json.refreshToken);"
+        ]
+       }
+      },
+      {
+       "listen": "prerequest",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.collectionVariables.set(\"usedRefreshToken\", pm.collectionVariables.get(\"refreshToken\"));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Use the OLD refresh token again - 401 (theft detected)",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/auth/refresh",
+      "description": "A refresh token that was already used can only come from a thief. The whole login family is revoked (revoke_reason = reuse_detected). The access token keeps working until it expires.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"refreshToken\": \"{{usedRefreshToken}}\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 401\", () => pm.response.to.have.status(401));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "My sessions",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/auth/sessions",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "02 Site and subscription (tenant = site)",
+   "description": "Module owner: Mahir. One transaction creates the site, the owner membership, the first area, a 14-day trial and the default escalation policy.",
+   "item": [
+    {
+     "name": "Onboarding - wrong kind - 400",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/onboarding",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"name\": \"Rahim Dairy Farm\",\n  \"kind\": \"factory\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 400\", () => pm.response.to.have.status(400));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Onboarding (create the site)",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/onboarding",
+      "description": "Show: SELECT * FROM site_members; SELECT status, trial_ends_at FROM subscriptions; SELECT * FROM escalation_steps;",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"name\": \"Rahim Dairy Farm\",\n  \"kind\": \"farm\",\n  \"address\": \"Feni\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"siteId\", json.site.id);",
+         "pm.collectionVariables.set(\"areaId\", json.area.id);",
+         "pm.collectionVariables.set(\"ownerMemberId\", json.member.id);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "My sites",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/me/sites",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"I am the owner\", () => pm.expect(json[0].role === \"owner\").to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Site with my permissions",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"owner has billing.manage\", () => pm.expect(json.me.permissions.includes(\"billing.manage\")).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Billing: trial on Basic + Core pack",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/billing",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"trialing\", () => pm.expect(json.subscription.status === \"trialing\").to.be.true);",
+         "pm.test(\"2 cameras allowed\", () => pm.expect(json.limits.cameras === 2).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Catalog: packs and rule templates",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/catalog/packs",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"5 packs\", () => pm.expect(json.length === 5).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Add the Farm pack",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/billing/items",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"packCode\": \"farm\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"paid add-on (Basic has no free pack slot)\", () => pm.expect(json.kind === \"addon\").to.be.true);"
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "03 Team, roles and area scope",
+   "description": "Module owner: Mahir. A second user is invited as a guard limited to one area. Shows 404 for non-members and 403 for missing permissions.",
+   "item": [
+    {
+     "name": "Register the guard",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/auth/register",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"name\": \"Jamal Guard\",\n  \"email\": \"{{guardEmail}}\",\n  \"password\": \"Passw0rd!demo\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"guardCode\", json.devCode);"
+        ]
+       }
+      },
+      {
+       "listen": "prerequest",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.collectionVariables.set(\"guardEmail\", \"jamal\" + Date.now() + \"@demo.com\");"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Verify the guard email",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/auth/verify-email",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"email\": \"{{guardEmail}}\",\n  \"code\": \"{{guardCode}}\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Login as the guard",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/auth/login",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"email\": \"{{guardEmail}}\",\n  \"password\": \"Passw0rd!demo\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"guardToken\", json.accessToken);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Guard opens the site before being invited - 404",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{guardToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}",
+      "description": "404 and not 403: an outsider cannot even learn that this site id exists."
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 404\", () => pm.response.to.have.status(404));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Create a second area \"Gate\"",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/areas",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"name\": \"Gate\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"gateAreaId\", json.id);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Invite the guard, limited to the Gate area",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/members/invite",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"email\": \"{{guardEmail}}\",\n  \"displayName\": \"Jamal\",\n  \"role\": \"guard\",\n  \"areaIds\": [\"{{gateAreaId}}\"]\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"inviteToken\", json.inviteToken);",
+         "pm.collectionVariables.set(\"guardMemberId\", json.member.id);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Guard accepts the invitation",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{guardToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/invites/accept",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"token\": \"{{inviteToken}}\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Guard: site is visible now",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{guardToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"role guard, limited to 1 area\", () => pm.expect(json.me.role === \"guard\" && json.me.areaIds.length === 1).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Guard tries billing - 403",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{guardToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/billing",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 403\", () => pm.response.to.have.status(403));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"missing_permission\", () => pm.expect(json.code === \"missing_permission\").to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Add a phone contact: brother",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/members/contacts",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"displayName\": \"Karim (brother)\",\n  \"phone\": \"+8801711111111\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"contact1Id\", json.id);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Add a phone contact: night guard",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/members/contacts",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"displayName\": \"Night guard\",\n  \"phone\": \"+8801722222222\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"contact2Id\", json.id);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Contact with a bad phone - 400",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/members/contacts",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"displayName\": \"X\",\n  \"phone\": \"01711\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 400\", () => pm.response.to.have.status(400));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Set the call list (order of phone calls)",
+     "request": {
+      "method": "PUT",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/members/call-list",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"memberIds\": [\"{{contact1Id}}\", \"{{contact2Id}}\"]\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Members",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/members",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"owner + guard + 2 contacts\", () => pm.expect(json.length === 4).to.be.true);"
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "04 Devices, cameras, zones, rules",
+   "description": "Module owner: Iftekhar. A device is whatever sends detections (here: Postman as a simulator). Shows the plan limit and the database refusing a cross-site foreign key.",
+   "item": [
+    {
+     "name": "Create a simulator device",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/devices",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"kind\": \"simulator\",\n  \"name\": \"Postman simulator\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"deviceId\", json.device.id);",
+         "pm.test(\"pairing code\", () => pm.expect(/^[0-9]{6}$/.test(json.pairing.code)).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Create a device key (shown once)",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/devices/{{deviceId}}/credentials",
+      "description": "Show: SELECT key_prefix, key_hash FROM device_credentials;  Only a SHA-256 hash is stored.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"label\": \"defense demo\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"deviceKey\", json.key);",
+         "pm.collectionVariables.set(\"credentialId\", json.credential.id);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Create camera 1 (Shed)",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/cameras",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"name\": \"Shed camera\",\n  \"areaId\": \"{{areaId}}\",\n  \"deviceId\": \"{{deviceId}}\",\n  \"sourceKind\": \"simulator\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"cameraId\", json.id);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Camera in an area of ANOTHER site - 400 from the database",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/cameras",
+      "description": "FOREIGN KEY (site_id, area_id) REFERENCES areas(site_id, id). Even if our code had a bug, PostgreSQL would refuse the row.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"name\": \"Bad camera\",\n  \"areaId\": \"11111111-1111-4111-8111-111111111111\",\n  \"sourceKind\": \"simulator\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"refused by the composite foreign key\", () => pm.expect(json.code === \"wrong_site\").to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Rules created automatically with the camera",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/rules",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"camera offline + camera covered\", () => pm.expect(json.length === 2).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Zone with a broken polygon - 400",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/cameras/{{cameraId}}/zones",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"name\": \"Broken\",\n  \"kind\": \"shed\",\n  \"polygon\": [\n    [\n      0.1,\n      0.1\n    ],\n    [\n      2,\n      0.1\n    ]\n  ]\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 400\", () => pm.response.to.have.status(400));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Zone quickstart: shed + \"10 cows expected\"",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/cameras/{{cameraId}}/zones/quickstart",
+      "description": "sustainS 600: the count must be wrong for 10 minutes before an incident opens. One bad frame never alarms.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"name\": \"Shed 1\",\n  \"kind\": \"shed\",\n  \"polygon\": [\n    [\n      0.05,\n      0.05\n    ],\n    [\n      0.95,\n      0.05\n    ],\n    [\n      0.95,\n      0.95\n    ],\n    [\n      0.05,\n      0.95\n    ]\n  ],\n  \"rules\": [\n    {\n      \"templateCode\": \"animal_missing\",\n      \"params\": {\n        \"min\": 10\n      },\n      \"sustainS\": 600,\n      \"clearS\": 60\n    }\n  ]\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"zoneId\", json.zone.id);",
+         "pm.collectionVariables.set(\"ruleId\", json.rules[0].id);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Rule with wrong params - 400 (zod, per rule kind)",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/zones/{{zoneId}}/rules",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"templateCode\": \"animal_missing\",\n  \"params\": {\n    \"min\": \"ten\"\n  }\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"invalid_rule_params\", () => pm.expect(json.code === \"invalid_rule_params\").to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Rule from a pack the site did not buy - 404",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/zones/{{zoneId}}/rules",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"templateCode\": \"ppe_missing\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"template_not_available\", () => pm.expect(json.code === \"template_not_available\").to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Rule with its live state (from Redis)",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/rules/{{ruleId}}",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"state ok\", () => pm.expect(json.liveState.state === \"ok\").to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Create camera 2 (Gate)",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/cameras",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"name\": \"Gate camera\",\n  \"areaId\": \"{{gateAreaId}}\",\n  \"sourceKind\": \"simulator\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"camera2Id\", json.id);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Create camera 3 - 403 plan_limit",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/cameras",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"name\": \"Third camera\",\n  \"areaId\": \"{{areaId}}\",\n  \"sourceKind\": \"simulator\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 403\", () => pm.response.to.have.status(403));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"plan_limit\", () => pm.expect(json.code === \"plan_limit\").to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Guard opens the Shed camera - 403 outside his area",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{guardToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/cameras/{{cameraId}}",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 403\", () => pm.response.to.have.status(403));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"outside_area_scope\", () => pm.expect(json.code === \"outside_area_scope\").to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Guard lists cameras - sees only the Gate",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{guardToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/cameras",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"1 camera\", () => pm.expect(json.length === 1 && json[0].name === \"Gate camera\").to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Guard tries to create a zone - 403",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{guardToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/cameras/{{camera2Id}}/zones",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"name\": \"Z\",\n  \"polygon\": [\n    [\n      0.05,\n      0.05\n    ],\n    [\n      0.95,\n      0.05\n    ],\n    [\n      0.95,\n      0.95\n    ],\n    [\n      0.05,\n      0.95\n    ]\n  ]\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 403\", () => pm.response.to.have.status(403));"
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "05 Escalation policy",
+   "description": "Module owner: Abid. Who is told, how, in which order. For the demonstration step 2 (phone calls) starts after 20 seconds instead of 2 minutes.",
+   "item": [
+    {
+     "name": "Default policy",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/escalation-policies",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"policyId\", json[0].id);",
+         "pm.test(\"2 steps\", () => pm.expect(json[0].steps.length === 2).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Policy for the demo: calls after 20 s",
+     "request": {
+      "method": "PUT",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/escalation-policies/{{policyId}}",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"name\": \"Default\",\n  \"minSeverity\": \"low\",\n  \"repeatCount\": 0,\n  \"steps\": [\n    {\n      \"waitS\": 0,\n      \"channels\": [\n        \"inapp\",\n        \"webpush\",\n        \"telegram\"\n      ],\n      \"audience\": \"all_members\"\n    },\n    {\n      \"waitS\": 20,\n      \"channels\": [\n        \"call\"\n      ],\n      \"audience\": \"call_list\",\n      \"callCount\": 2,\n      \"ringTimeoutS\": 45\n    }\n  ]\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Policy with a wrong step - 400",
+     "request": {
+      "method": "PUT",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/escalation-policies/{{policyId}}",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"name\": \"Bad\",\n  \"steps\": [\n    {\n      \"waitS\": 0,\n      \"channels\": [\n        \"pigeon\"\n      ],\n      \"audience\": \"all_members\"\n    }\n  ]\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 400\", () => pm.response.to.have.status(400));"
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "06 Detections -> incident -> alert -> phone call",
+   "description": "Module owners: Iftekhar (engine, incidents), Abid (alerts). THE MAIN DEMONSTRATION. The AI model only sends boxes; everything after that is NestJS.",
+   "item": [
+    {
+     "name": "Readings without a device key - 401",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/device/readings",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{{readingsBody}}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 401\", () => pm.response.to.have.status(401));"
+        ]
+       }
+      },
+      {
+       "listen": "prerequest",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "// 1 reading",
+         "// The simulator device replays recorded time, so 1 minutes are sent in one request.",
+         "if (!pm.collectionVariables.get(\"simBase\")) pm.collectionVariables.set(\"simBase\", String(Date.now() - 40 * 60 * 1000));",
+         "const base = Number(pm.collectionVariables.get(\"simBase\"));",
+         "let seq = Number(pm.collectionVariables.get(\"seq\") || Date.now());",
+         "const readings = [];",
+         "for (let i = 0; i < 1; i++) {",
+         "  const detections = [];",
+         "  for (let c = 0; c < 10; c++) detections.push({ cls: \"cow\", conf: 0.9, box: [0.1 + (c % 5) * 0.15, 0.2 + Math.floor(c / 5) * 0.3, 0.1, 0.2] });",
+         "  readings.push({ cameraId: pm.collectionVariables.get(\"cameraId\"), seq: seq++, capturedAt: new Date(base + (0 + i) * 60000).toISOString(),",
+         "    model: { code: \"farm-detect\", version: \"1.0\" }, frame: { w: 1280, h: 720 }, detections });",
+         "}",
+         "pm.collectionVariables.set(\"seq\", String(seq));",
+         "pm.collectionVariables.set(\"readingsBody\", JSON.stringify({ readings }, null, 1));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Readings with a USER token - 401",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/device/readings",
+      "description": "A user token never works on the device API, and a device key never works on user routes.",
+      "body": {
+       "mode": "raw",
+       "raw": "{{readingsBody}}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 401\", () => pm.response.to.have.status(401));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Readings with a wrong shape - 400",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Device {{deviceKey}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/device/readings",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"readings\": [\n    {\n      \"cameraId\": \"x\",\n      \"seq\": -1\n    }\n  ]\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"invalid_payload\", () => pm.expect(json.code === \"invalid_payload\").to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Device config (models, zones to measure)",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Device {{deviceKey}}"
+       }
+      ],
+      "url": "{{baseUrl}}/device/config",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"1 camera with models\", () => pm.expect(json.cameras.length === 1 && json.cameras[0].models.length >= 1).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "A) 10 cows for 3 minutes (all fine)",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Device {{deviceKey}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/device/readings",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{{readingsBody}}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"3 accepted\", () => pm.expect(json.accepted === 3).to.be.true);"
+        ]
+       }
+      },
+      {
+       "listen": "prerequest",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "// 10 cows, minutes 0-2",
+         "// The simulator device replays recorded time, so 3 minutes are sent in one request.",
+         "if (!pm.collectionVariables.get(\"simBase\")) pm.collectionVariables.set(\"simBase\", String(Date.now() - 40 * 60 * 1000));",
+         "const base = Number(pm.collectionVariables.get(\"simBase\"));",
+         "let seq = Number(pm.collectionVariables.get(\"seq\") || Date.now());",
+         "const readings = [];",
+         "for (let i = 0; i < 3; i++) {",
+         "  const detections = [];",
+         "  for (let c = 0; c < 10; c++) detections.push({ cls: \"cow\", conf: 0.9, box: [0.1 + (c % 5) * 0.15, 0.2 + Math.floor(c / 5) * 0.3, 0.1, 0.2] });",
+         "  readings.push({ cameraId: pm.collectionVariables.get(\"cameraId\"), seq: seq++, capturedAt: new Date(base + (0 + i) * 60000).toISOString(),",
+         "    model: { code: \"farm-detect\", version: \"1.0\" }, frame: { w: 1280, h: 720 }, detections });",
+         "}",
+         "pm.collectionVariables.set(\"seq\", String(seq));",
+         "pm.collectionVariables.set(\"readingsBody\", JSON.stringify({ readings }, null, 1));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "A again) the SAME readings - all duplicates",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Device {{deviceKey}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/device/readings",
+      "description": "A device that retries after a bad connection must not count things twice.",
+      "body": {
+       "mode": "raw",
+       "raw": "{{readingsBody}}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"0 accepted, 3 duplicates\", () => pm.expect(json.accepted === 0 && json.rejected.length === 3 && json.rejected[0].reason === \"duplicate\").to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Live state: 10 cows, rule ok",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/live",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"10 cows\", () => pm.expect(json[0].counts.cow === 10).to.be.true);",
+         "pm.test(\"rule ok\", () => pm.expect(json[0].rules[0].state === \"ok\").to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "B) 9 cows for 5 minutes (one is missing)",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Device {{deviceKey}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/device/readings",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{{readingsBody}}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"5 accepted\", () => pm.expect(json.accepted === 5).to.be.true);"
+        ]
+       }
+      },
+      {
+       "listen": "prerequest",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "// 9 cows, minutes 3-7",
+         "// The simulator device replays recorded time, so 5 minutes are sent in one request.",
+         "if (!pm.collectionVariables.get(\"simBase\")) pm.collectionVariables.set(\"simBase\", String(Date.now() - 40 * 60 * 1000));",
+         "const base = Number(pm.collectionVariables.get(\"simBase\"));",
+         "let seq = Number(pm.collectionVariables.get(\"seq\") || Date.now());",
+         "const readings = [];",
+         "for (let i = 0; i < 5; i++) {",
+         "  const detections = [];",
+         "  for (let c = 0; c < 9; c++) detections.push({ cls: \"cow\", conf: 0.9, box: [0.1 + (c % 5) * 0.15, 0.2 + Math.floor(c / 5) * 0.3, 0.1, 0.2] });",
+         "  readings.push({ cameraId: pm.collectionVariables.get(\"cameraId\"), seq: seq++, capturedAt: new Date(base + (3 + i) * 60000).toISOString(),",
+         "    model: { code: \"farm-detect\", version: \"1.0\" }, frame: { w: 1280, h: 720 }, detections });",
+         "}",
+         "pm.collectionVariables.set(\"seq\", String(seq));",
+         "pm.collectionVariables.set(\"readingsBody\", JSON.stringify({ readings }, null, 1));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "No incident yet (the rule waits 10 minutes)",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/incidents",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"0 incidents\", () => pm.expect(json.total === 0).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Rule state: pending",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/rules/{{ruleId}}",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"pending\", () => pm.expect(json.liveState.state === \"pending\").to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "C) 9 cows for 7 more minutes -> the rule FIRES",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Device {{deviceKey}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/device/readings",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{{readingsBody}}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 202\", () => pm.response.to.have.status(202));"
+        ]
+       }
+      },
+      {
+       "listen": "prerequest",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "// 9 cows, minutes 8-14",
+         "// The simulator device replays recorded time, so 7 minutes are sent in one request.",
+         "if (!pm.collectionVariables.get(\"simBase\")) pm.collectionVariables.set(\"simBase\", String(Date.now() - 40 * 60 * 1000));",
+         "const base = Number(pm.collectionVariables.get(\"simBase\"));",
+         "let seq = Number(pm.collectionVariables.get(\"seq\") || Date.now());",
+         "const readings = [];",
+         "for (let i = 0; i < 7; i++) {",
+         "  const detections = [];",
+         "  for (let c = 0; c < 9; c++) detections.push({ cls: \"cow\", conf: 0.9, box: [0.1 + (c % 5) * 0.15, 0.2 + Math.floor(c / 5) * 0.3, 0.1, 0.2] });",
+         "  readings.push({ cameraId: pm.collectionVariables.get(\"cameraId\"), seq: seq++, capturedAt: new Date(base + (8 + i) * 60000).toISOString(),",
+         "    model: { code: \"farm-detect\", version: \"1.0\" }, frame: { w: 1280, h: 720 }, detections });",
+         "}",
+         "pm.collectionVariables.set(\"seq\", String(seq));",
+         "pm.collectionVariables.set(\"readingsBody\", JSON.stringify({ readings }, null, 1));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Incident created, with a risk score",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/incidents",
+      "description": "Show: SELECT title, risk_score, dedup_key, expected, observed FROM incidents;"
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"incidentId\", json.items[0].id);",
+         "pm.collectionVariables.set(\"alertId\", json.items[0].alertId);",
+         "pm.test(\"1 open incident\", () => pm.expect(json.total === 1 && json.items[0].status === \"open\").to.be.true);",
+         "pm.test(\"risk score 50 or more -> an alert was raised\", () => pm.expect(json.items[0].riskScore >= 50 && !!json.items[0].alertId).to.be.true);"
+        ]
+       }
+      },
+      {
+       "listen": "prerequest",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "// gives the background job time to run before this request is sent",
+         "setTimeout(() => {}, 1000);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Incident detail: expected vs observed, events",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/incidents/{{incidentId}}",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"observed 9 cows\", () => pm.expect(json.observed.counts.cow === 9).to.be.true);",
+         "pm.test(\"events: created, alert_sent\", () => pm.expect(json.events.length >= 2).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Alert, step 1: everyone told in the app",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/alerts/{{alertId}}",
+      "description": "Telegram and push show \"failed: not configured\" until their keys are added. The escalation continues anyway."
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"active, step 1\", () => pm.expect(json.status === \"active\" && json.currentStep === 1).to.be.true);",
+         "pm.test(\"in-app delivered\", () => pm.expect(json.recipients.some(r => r.attempts.some(a => a.channel === \"inapp\" && a.status === \"delivered\"))).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Alert, step 2 (after 20 s): first phone is ringing",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/alerts/{{alertId}}",
+      "description": "Wait 20 seconds before sending this one. The server log shows: [MockVoice] calling Karim (brother) ..."
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"providerRef1\", (json.recipients.flatMap(r => r.attempts).find(a => a.status === \"ringing\") || {}).providerRef);",
+         "pm.test(\"step 2\", () => pm.expect(json.currentStep === 2).to.be.true);",
+         "pm.test(\"a call is ringing\", () => pm.expect(json.recipients.some(r => r.attempts.some(a => a.channel === \"call\" && a.status === \"ringing\"))).to.be.true);"
+        ]
+       }
+      },
+      {
+       "listen": "prerequest",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "// gives the background job time to run before this request is sent",
+         "setTimeout(() => {}, 22000);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Phone 1: no answer -> next person is called",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/dev/mock-voice/{{providerRef1}}",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"event\": \"no_answer\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Alert: second phone is ringing",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/alerts/{{alertId}}",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"providerRef2\", (json.recipients.flatMap(r => r.attempts).find(a => a.status === \"ringing\") || {}).providerRef);",
+         "pm.test(\"first call: no_answer\", () => pm.expect(json.recipients.some(r => r.attempts.some(a => a.status === \"no_answer\"))).to.be.true);",
+         "pm.test(\"second call ringing\", () => pm.expect(!!pm.collectionVariables.get(\"providerRef2\")).to.be.true);"
+        ]
+       }
+      },
+      {
+       "listen": "prerequest",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "// gives the background job time to run before this request is sent",
+         "setTimeout(() => {}, 1000);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Phone 2: answered",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/dev/mock-voice/{{providerRef2}}",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"event\": \"answered\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Phone 2: presses 1 -> acknowledged",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/dev/mock-voice/{{providerRef2}}",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"event\": \"digit\",\n  \"digit\": \"1\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"alert acknowledged\", () => pm.expect(json.alertStatus === \"acknowledged\").to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Alert: acknowledged by phone",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/alerts/{{alertId}}",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"acknowledged via call by the night guard\", () => pm.expect(json.status === \"acknowledged\" && json.acknowledgedVia === \"call\" && json.acknowledgedBy === pm.collectionVariables.get(\"contact2Id\")).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Incident: acknowledged too",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/incidents/{{incidentId}}",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"acknowledged\", () => pm.expect(json.status === \"acknowledged\").to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "D) the cow is back: 10 cows for 3 minutes",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Device {{deviceKey}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/device/readings",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{{readingsBody}}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 202\", () => pm.response.to.have.status(202));"
+        ]
+       }
+      },
+      {
+       "listen": "prerequest",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "// 10 cows, minutes 16-18",
+         "// The simulator device replays recorded time, so 3 minutes are sent in one request.",
+         "if (!pm.collectionVariables.get(\"simBase\")) pm.collectionVariables.set(\"simBase\", String(Date.now() - 40 * 60 * 1000));",
+         "const base = Number(pm.collectionVariables.get(\"simBase\"));",
+         "let seq = Number(pm.collectionVariables.get(\"seq\") || Date.now());",
+         "const readings = [];",
+         "for (let i = 0; i < 3; i++) {",
+         "  const detections = [];",
+         "  for (let c = 0; c < 10; c++) detections.push({ cls: \"cow\", conf: 0.9, box: [0.1 + (c % 5) * 0.15, 0.2 + Math.floor(c / 5) * 0.3, 0.1, 0.2] });",
+         "  readings.push({ cameraId: pm.collectionVariables.get(\"cameraId\"), seq: seq++, capturedAt: new Date(base + (16 + i) * 60000).toISOString(),",
+         "    model: { code: \"farm-detect\", version: \"1.0\" }, frame: { w: 1280, h: 720 }, detections });",
+         "}",
+         "pm.collectionVariables.set(\"seq\", String(seq));",
+         "pm.collectionVariables.set(\"readingsBody\", JSON.stringify({ readings }, null, 1));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Incident: the condition is over",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/incidents/{{incidentId}}",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"conditionActive false, endedAt set\", () => pm.expect(json.conditionActive === false && !!json.endedAt).to.be.true);"
+        ]
+       }
+      },
+      {
+       "listen": "prerequest",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "// gives the background job time to run before this request is sent",
+         "setTimeout(() => {}, 1000);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "E) missing again within 15 minutes: 8 cows",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Device {{deviceKey}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/device/readings",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{{readingsBody}}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 202\", () => pm.response.to.have.status(202));"
+        ]
+       }
+      },
+      {
+       "listen": "prerequest",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "// 8 cows, minutes 20-21",
+         "// The simulator device replays recorded time, so 2 minutes are sent in one request.",
+         "if (!pm.collectionVariables.get(\"simBase\")) pm.collectionVariables.set(\"simBase\", String(Date.now() - 40 * 60 * 1000));",
+         "const base = Number(pm.collectionVariables.get(\"simBase\"));",
+         "let seq = Number(pm.collectionVariables.get(\"seq\") || Date.now());",
+         "const readings = [];",
+         "for (let i = 0; i < 2; i++) {",
+         "  const detections = [];",
+         "  for (let c = 0; c < 8; c++) detections.push({ cls: \"cow\", conf: 0.9, box: [0.1 + (c % 5) * 0.15, 0.2 + Math.floor(c / 5) * 0.3, 0.1, 0.2] });",
+         "  readings.push({ cameraId: pm.collectionVariables.get(\"cameraId\"), seq: seq++, capturedAt: new Date(base + (20 + i) * 60000).toISOString(),",
+         "    model: { code: \"farm-detect\", version: \"1.0\" }, frame: { w: 1280, h: 720 }, detections });",
+         "}",
+         "pm.collectionVariables.set(\"seq\", String(seq));",
+         "pm.collectionVariables.set(\"readingsBody\", JSON.stringify({ readings }, null, 1));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Same incident, recurrence 2 (not a second incident)",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/incidents",
+      "description": "The partial unique index uq_incidents_open_dedup allows one open incident per problem. The INSERT became an UPDATE."
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"still 1 incident\", () => pm.expect(json.total === 1).to.be.true);",
+         "pm.test(\"recurrence 2\", () => pm.expect(json.items[0].recurrence === 2).to.be.true);"
+        ]
+       }
+      },
+      {
+       "listen": "prerequest",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "// gives the background job time to run before this request is sent",
+         "setTimeout(() => {}, 1000);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Add a note",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/incidents/{{incidentId}}/notes",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"text\": \"Found her behind the feed store\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 201\", () => pm.response.to.have.status(201));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "False alarm with an unknown reason - 400",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/incidents/{{incidentId}}/false-alarm",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"reason\": \"ghost\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 400\", () => pm.response.to.have.status(400));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Resolve the incident",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/incidents/{{incidentId}}/resolve",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"note\": \"Cow found behind the feed store\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"resolved\", () => pm.expect(json.status === \"resolved\").to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Search incidents by a word in the note",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/incidents?q=feed",
+      "description": "Uses the generated tsvector column and its GIN index."
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"found\", () => pm.expect(json.total === 1).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "A query parameter that is not allowed - 400",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/incidents?site_id=00000000-0000-0000-0000-000000000000",
+      "description": "The client cannot pass its own site filter. The site always comes from the URL that the guard checked."
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 400\", () => pm.response.to.have.status(400));"
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "07 Manual alert, idempotency, \"no call after acknowledge\"",
+   "description": "Module owner: Abid.",
+   "item": [
+    {
+     "name": "Send a manual alert (Idempotency-Key)",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Idempotency-Key",
+        "value": "{{idemKey}}"
+       },
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/alerts",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"title\": \"Come to the gate now\",\n  \"body\": \"A truck is waiting\",\n  \"severity\": \"high\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"manualAlertId\", json.alert.id);"
+        ]
+       }
+      },
+      {
+       "listen": "prerequest",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.collectionVariables.set(\"idemKey\", \"tap-\" + Date.now());"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Same key again -> 200 and the SAME alert",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Idempotency-Key",
+        "value": "{{idemKey}}"
+       },
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/alerts",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"title\": \"Come to the gate now\",\n  \"body\": \"A truck is waiting\",\n  \"severity\": \"high\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"same alert, not a new one\", () => pm.expect(json.created === false && json.alert.id === pm.collectionVariables.get(\"manualAlertId\")).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Guard acknowledges at step 1",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{guardToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/alerts/{{manualAlertId}}/acknowledge",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"acknowledged now\", () => pm.expect(json.acknowledgedNow === true).to.be.true);"
+        ]
+       }
+      },
+      {
+       "listen": "prerequest",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "// gives the background job time to run before this request is sent",
+         "setTimeout(() => {}, 1000);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Owner acknowledges a moment later - harmless",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/alerts/{{manualAlertId}}/acknowledge",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"already acknowledged by the guard\", () => pm.expect(json.acknowledgedNow === false && json.alert.acknowledgedBy === pm.collectionVariables.get(\"guardMemberId\")).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "25 s later: nobody was ever called",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/alerts/{{manualAlertId}}",
+      "description": "Wait 25 seconds. Step 2 would have started after 20 s; it did not, because the alert was acknowledged."
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"still step 1\", () => pm.expect(json.currentStep === 1).to.be.true);",
+         "pm.test(\"no call attempt exists\", () => pm.expect(!json.recipients.some(r => r.attempts.some(a => a.channel === \"call\"))).to.be.true);"
+        ]
+       }
+      },
+      {
+       "listen": "prerequest",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "// gives the background job time to run before this request is sent",
+         "setTimeout(() => {}, 25000);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Test alert (only to me)",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/alerts/test",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"testAckToken\", json.ackToken);",
+         "pm.collectionVariables.set(\"testAlertId\", json.alert.id);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Acknowledge by one-time token (push / Telegram button)",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/alerts/ack",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"token\": \"{{testAckToken}}\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"acknowledged\", () => pm.expect(json.status === \"acknowledged\").to.be.true);"
+        ]
+       }
+      },
+      {
+       "listen": "prerequest",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "// gives the background job time to run before this request is sent",
+         "setTimeout(() => {}, 1000);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Alerts list",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/alerts",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"3 alerts\", () => pm.expect(json.total === 3).to.be.true);"
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "08 Snapshots and video",
+   "description": "Module owner: Musa. Files are never public: a signed link works for 5 minutes. In Postman set Settings -> Working directory to the project folder so the two sample files are found.",
+   "item": [
+    {
+     "name": "Open a new incident for the media demo: 7 cows, 12 minutes",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Device {{deviceKey}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/device/readings",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{{readingsBody}}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 202\", () => pm.response.to.have.status(202));"
+        ]
+       }
+      },
+      {
+       "listen": "prerequest",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "// 7 cows, minutes 40-51",
+         "// The simulator device replays recorded time, so 12 minutes are sent in one request.",
+         "if (!pm.collectionVariables.get(\"simBase\")) pm.collectionVariables.set(\"simBase\", String(Date.now() - 40 * 60 * 1000));",
+         "const base = Number(pm.collectionVariables.get(\"simBase\"));",
+         "let seq = Number(pm.collectionVariables.get(\"seq\") || Date.now());",
+         "const readings = [];",
+         "for (let i = 0; i < 12; i++) {",
+         "  const detections = [];",
+         "  for (let c = 0; c < 7; c++) detections.push({ cls: \"cow\", conf: 0.9, box: [0.1 + (c % 5) * 0.15, 0.2 + Math.floor(c / 5) * 0.3, 0.1, 0.2] });",
+         "  readings.push({ cameraId: pm.collectionVariables.get(\"cameraId\"), seq: seq++, capturedAt: new Date(base + (40 + i) * 60000).toISOString(),",
+         "    model: { code: \"farm-detect\", version: \"1.0\" }, frame: { w: 1280, h: 720 }, detections });",
+         "}",
+         "pm.collectionVariables.set(\"seq\", String(seq));",
+         "pm.collectionVariables.set(\"readingsBody\", JSON.stringify({ readings }, null, 1));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "The new incident",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/incidents?status=open",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"incident2Id\", json.items[0].id);",
+         "pm.test(\"1 open\", () => pm.expect(json.total === 1).to.be.true);"
+        ]
+       }
+      },
+      {
+       "listen": "prerequest",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "// gives the background job time to run before this request is sent",
+         "setTimeout(() => {}, 1000);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Device uploads a snapshot (form-data)",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Device {{deviceKey}}"
+       }
+      ],
+      "url": "{{baseUrl}}/device/snapshots",
+      "description": "",
+      "body": {
+       "mode": "formdata",
+       "formdata": [
+        {
+         "key": "meta",
+         "type": "text",
+         "value": "{\"cameraId\":\"{{cameraId}}\",\"capturedAt\":\"{{snapAt}}\",\"detections\":[{\"cls\":\"cow\",\"conf\":0.9,\"box\":[0.1,0.2,0.1,0.2]}],\"frame\":{\"w\":1280,\"h\":720}}"
+        },
+        {
+         "key": "image",
+         "type": "file",
+         "src": "test/postman/files/frame.png"
+        }
+       ]
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"snapshotId\", json.snapshotId);",
+         "pm.test(\"linked to the open incident\", () => pm.expect(json.incidentId === pm.collectionVariables.get(\"incident2Id\")).to.be.true);"
+        ]
+       }
+      },
+      {
+       "listen": "prerequest",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.collectionVariables.set(\"snapAt\", new Date(Number(pm.collectionVariables.get(\"simBase\")) + 51 * 60000).toISOString());",
+         "pm.collectionVariables.set(\"segAt\", new Date(Number(pm.collectionVariables.get(\"simBase\")) + 50 * 60000).toISOString());"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Device uploads a video segment (form-data)",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Device {{deviceKey}}"
+       }
+      ],
+      "url": "{{baseUrl}}/device/segments",
+      "description": "",
+      "body": {
+       "mode": "formdata",
+       "formdata": [
+        {
+         "key": "meta",
+         "type": "text",
+         "value": "{\"cameraId\":\"{{cameraId}}\",\"startedAt\":\"{{segAt}}\",\"durationMs\":60000,\"container\":\"webm\"}"
+        },
+        {
+         "key": "video",
+         "type": "file",
+         "src": "test/postman/files/segment.webm"
+        }
+       ]
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"linked to 1 incident\", () => pm.expect(json.linkedToIncidents >= 1).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "The same segment again - 409",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Device {{deviceKey}}"
+       }
+      ],
+      "url": "{{baseUrl}}/device/segments",
+      "description": "",
+      "body": {
+       "mode": "formdata",
+       "formdata": [
+        {
+         "key": "meta",
+         "type": "text",
+         "value": "{\"cameraId\":\"{{cameraId}}\",\"startedAt\":\"{{segAt}}\",\"durationMs\":60000,\"container\":\"webm\"}"
+        },
+        {
+         "key": "video",
+         "type": "file",
+         "src": "test/postman/files/segment.webm"
+        }
+       ]
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 409\", () => pm.response.to.have.status(409));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Snapshots of the incident (signed links)",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/snapshots?incidentId={{incident2Id}}",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"snapshotUrl\", json[0].url);",
+         "pm.test(\"1 snapshot with boxes\", () => pm.expect(json.length === 1 && json[0].detections.length === 1).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Open the snapshot with its signed link (no login)",
+     "request": {
+      "method": "GET",
+      "header": [],
+      "url": "{{snapshotUrl}}",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"an image\", () => pm.expect(pm.response.headers.get(\"Content-Type\") === \"image/png\").to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Incident clip: which segments, where to start",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/incidents/{{incident2Id}}/clip",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"clipUrl\", json.segments[0].url);",
+         "pm.test(\"1 segment\", () => pm.expect(json.segments.length === 1).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Video with HTTP Range - 206",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Range",
+        "value": "bytes=0-99"
+       }
+      ],
+      "url": "{{clipUrl}}",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 206\", () => pm.response.to.have.status(206));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"100 bytes\", () => pm.expect(pm.response.headers.get(\"Content-Length\") === \"100\").to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "A changed media link - 403",
+     "request": {
+      "method": "GET",
+      "header": [],
+      "url": "{{clipUrl}}x",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 403\", () => pm.response.to.have.status(403));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "The old public /uploads folder is gone - 404",
+     "request": {
+      "method": "GET",
+      "header": [],
+      "url": "{{serverUrl}}/uploads/anything.jpg",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 404\", () => pm.response.to.have.status(404));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Guard (other area) asks for the clip - 403",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{guardToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/incidents/{{incident2Id}}/clip",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 403\", () => pm.response.to.have.status(403));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Mark as false alarm (feeds the model feedback)",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/incidents/{{incident2Id}}/false-alarm",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"reason\": \"animal\",\n  \"note\": \"Cows lying behind the feeder\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"false_alarm\", () => pm.expect(json.incident.status === \"false_alarm\").to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Share the incident for 2 hours",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/incidents/{{incident2Id}}/share",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"hours\": 2\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"shareUrl\", json.url);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Open the shared link without login",
+     "request": {
+      "method": "GET",
+      "header": [],
+      "url": "{{shareUrl}}",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"title only, no media\", () => pm.expect(!!json.title && json.observed === undefined).to.be.true);"
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "09 Billing and payment webhook",
+   "description": "Module owner: Mahir. The invoice job and the payment webhook are both safe to repeat.",
+   "item": [
+    {
+     "name": "Issue the invoice for this period",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/billing/invoices/issue",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"invoiceId\", json.invoice.id);",
+         "pm.test(\"created with 2 lines (plan + Farm pack)\", () => pm.expect(json.created === true && json.invoice.lines.length === 2).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Issue again -> the same invoice",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/billing/invoices/issue",
+      "description": "UNIQUE (subscription_id, period_start) in the database."
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"not created twice\", () => pm.expect(json.created === false && json.invoice.id === pm.collectionVariables.get(\"invoiceId\")).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Guard tries to pay - 403",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{guardToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/billing/invoices/{{invoiceId}}/pay",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"provider\": \"sandbox\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 403\", () => pm.response.to.have.status(403));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Start a sandbox payment",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/billing/invoices/{{invoiceId}}/pay",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"provider\": \"sandbox\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"providerTxnId\", json.providerTxnId);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Webhook without the secret - 401",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/webhooks/payments/sandbox",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"providerTxnId\": \"{{providerTxnId}}\",\n  \"status\": \"succeeded\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 401\", () => pm.response.to.have.status(401));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Webhook: payment succeeded",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "x-webhook-secret",
+        "value": "{{paymentWebhookSecret}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/webhooks/payments/sandbox",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"providerTxnId\": \"{{providerTxnId}}\",\n  \"status\": \"succeeded\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"processed\", () => pm.expect(json.duplicate === false).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "The same webhook again - ignored",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "x-webhook-secret",
+        "value": "{{paymentWebhookSecret}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/webhooks/payments/sandbox",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"providerTxnId\": \"{{providerTxnId}}\",\n  \"status\": \"succeeded\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"duplicate\", () => pm.expect(json.duplicate === true).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Invoice is paid, subscription is active",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/billing",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"active\", () => pm.expect(json.subscription.status === \"active\").to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Upgrade to Standard",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/billing/plan",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"planCode\": \"standard\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"8 cameras now\", () => pm.expect(json.limits.cameras === 8).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Camera 3 is allowed now",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/cameras",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"name\": \"Third camera\",\n  \"areaId\": \"{{areaId}}\",\n  \"sourceKind\": \"simulator\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 201\", () => pm.response.to.have.status(201));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Downgrade to Basic with 3 cameras - 409",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/billing/plan",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"planCode\": \"basic\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 409\", () => pm.response.to.have.status(409));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"usage_exceeds_plan\", () => pm.expect(json.code === \"usage_exceeds_plan\").to.be.true);"
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "10 Team chat and support tickets",
+   "description": "Module owner: Abid.",
+   "item": [
+    {
+     "name": "Conversations: team room + one thread per alert",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/conversations",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"teamConversationId\", json.find(c => c.kind === \"team\").id);",
+         "pm.test(\"team room exists\", () => pm.expect(json.some(c => c.kind === \"team\")).to.be.true);",
+         "pm.test(\"alert threads exist\", () => pm.expect(json.some(c => c.kind === \"alert\")).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Send a message",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/conversations/{{teamConversationId}}/messages",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"body\": \"I am going to check the shed\",\n  \"clientMsgId\": \"{{clientMsgId}}\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"messageId\", json.id);"
+        ]
+       }
+      },
+      {
+       "listen": "prerequest",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.collectionVariables.set(\"clientMsgId\", \"msg-\" + Date.now());"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Same clientMsgId again -> the same message",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/conversations/{{teamConversationId}}/messages",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"body\": \"I am going to check the shed\",\n  \"clientMsgId\": \"{{clientMsgId}}\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"same id\", () => pm.expect(json.id === pm.collectionVariables.get(\"messageId\")).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Guard sees 1 unread",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{guardToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/conversations",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"unread 1\", () => pm.expect(json.find(c => c.kind === \"team\").unread === 1).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Guard reads the messages",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{guardToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/conversations/{{teamConversationId}}/messages",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"1 message\", () => pm.expect(json.length === 1).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Guard marks as read",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{guardToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/conversations/{{teamConversationId}}/read",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"lastReadId\": {{messageId}}\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 204\", () => pm.response.to.have.status(204));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Open a support ticket (feature request)",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/support/tickets",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"siteId\": \"{{siteId}}\",\n  \"category\": \"feature_request\",\n  \"subject\": \"Please count my ducks too\",\n  \"body\": \"Can you add duck counting to the Farm pack?\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"ticketId\", json.id);",
+         "pm.test(\"has a ticket number\", () => pm.expect(!!json.number).to.be.true);"
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "11 Admin panel (platform roles)",
+   "description": "Module owner: Mahir (admin), Abid (tickets). Uses sir's RolesGuard. The two staff accounts come from the seed.",
+   "item": [
+    {
+     "name": "Login as admin",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/auth/login",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"adminToken\", json.accessToken);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Login as support",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/auth/login",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"email\": \"{{supportEmail}}\",\n  \"password\": \"{{supportPassword}}\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"supportToken\", json.accessToken);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "A customer on an admin route - 403",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/admin/tickets",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 403\", () => pm.response.to.have.status(403));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Support: ticket queue (search \"duck\")",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{supportToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/admin/tickets?q=duck",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"found\", () => pm.expect(json.total >= 1).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Support: internal note (customer never sees it)",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{supportToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/admin/tickets/{{ticketId}}/messages",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"body\": \"Ask the ML team how long a duck model takes\",\n  \"isInternal\": true\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 201\", () => pm.response.to.have.status(201));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Support: reply to the customer",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{supportToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/admin/tickets/{{ticketId}}/messages",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"body\": \"Yes, we can build this. A price follows.\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 201\", () => pm.response.to.have.status(201));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Support tries to set a price - 403 (admin only)",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{supportToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/admin/tickets/{{ticketId}}/quote",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"priceMinor\": 80000\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 403\", () => pm.response.to.have.status(403));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Admin sets the price",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{adminToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/admin/tickets/{{ticketId}}/quote",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"priceMinor\": 80000\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"quoted\", () => pm.expect(json.quotedPriceMinor === 80000).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Customer reads the ticket: 2 messages, no internal note",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/support/tickets/{{ticketId}}",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"2 public messages\", () => pm.expect(json.messages.length === 2 && json.messages.every(m => m.isInternal === false)).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Support asks for revenue - 403",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{supportToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/admin/metrics/revenue",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 403\", () => pm.response.to.have.status(403));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Admin: revenue",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{adminToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/admin/metrics/revenue",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"paid money is counted\", () => pm.expect(json.totals.paidMinor > 0).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Admin: subscriptions",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{adminToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/admin/metrics/subscriptions",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Admin: usage",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{adminToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/admin/metrics/usage",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"has users\", () => pm.expect(json.users >= 4).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Support opens a customer SITE route - 404",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{supportToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/incidents",
+      "description": "Staff are not members of customer sites. They get a summary without pictures or video, and every look is audited."
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 404\", () => pm.response.to.have.status(404));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Support: site summary (numbers only)",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{supportToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/admin/sites/{{siteId}}/summary",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"3 cameras\", () => pm.expect(json.cameras === 3).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Admin: the audit log shows that look",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{adminToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/admin/audit?siteId={{siteId}}&action=admin.site.view",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"1 audit row\", () => pm.expect(json.total === 1 && json.items[0].actorKind === \"staff\").to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Admin: custom pack for this site",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{adminToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/admin/sites/{{siteId}}/custom-pack",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"name\": \"Duck counting\",\n  \"templateCodes\": [\n    \"animal_missing\"\n  ],\n  \"priceMinor\": 80000\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"private pack\", () => pm.expect(json.pack.code.startsWith(\"custom_\") && json.item.kind === \"custom\").to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Admin: health (database, Redis, queues)",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{adminToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/admin/health",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"all queues listed\", () => pm.expect([\"incident\",\"escalation\",\"delivery\",\"maintenance\",\"export\"].every(q => json.queues[q])).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Admin: users",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{adminToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/admin/users?q=jamal",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"guardUserId\", json.items[0].id);"
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "12 Background jobs, analytics, camera offline",
+   "description": "Module owner: Iftekhar. Jobs normally run on a timetable (Bull). An admin can run one now so nobody waits during the demonstration.",
+   "item": [
+    {
+     "name": "List of background tasks",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{adminToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/dev/tasks",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Run now: write minute counts to PostgreSQL",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{adminToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/dev/tasks/flush-metrics",
+      "description": "Show: SELECT bucket, n, sum, min, max FROM zone_metric_minutes ORDER BY bucket;",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"force\": true\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"rows written\", () => pm.expect(json.result.minuteRowsWritten > 0).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Chart: cows per minute",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/zones/{{zoneId}}/metrics?key=count.cow&from={{chartFrom}}&to={{chartTo}}",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"minute points\", () => pm.expect(json.length >= 20).to.be.true);",
+         "pm.test(\"first minutes show 10 cows\", () => pm.expect(json[0].avg === 10).to.be.true);"
+        ]
+       }
+      },
+      {
+       "listen": "prerequest",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "const base = Number(pm.collectionVariables.get(\"simBase\"));",
+         "pm.collectionVariables.set(\"chartFrom\", new Date(base - 60000).toISOString());",
+         "pm.collectionVariables.set(\"chartTo\", new Date(base + 3600000).toISOString());"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Run now: roll minutes up into hours",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{adminToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/dev/tasks/rollup-hours",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"sinceHours\": 48\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"hour rows\", () => pm.expect(json.result.hourRows >= 1).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Run now: rebuild baselines",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{adminToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/dev/tasks/baselines",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Run now: camera sweep (treat silence as offline)",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{adminToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/dev/tasks/camera-sweep",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"offlineAfterS\": 0\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"a camera went offline\", () => pm.expect(json.result.wentOffline >= 1).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "\"Camera offline\" incident",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/incidents?status=open",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"offline incident\", () => pm.expect(json.items.some(i => i.title.includes(\"offline\"))).to.be.true);"
+        ]
+       }
+      },
+      {
+       "listen": "prerequest",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "// gives the background job time to run before this request is sent",
+         "setTimeout(() => {}, 1000);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Device heartbeat -> camera is back",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Device {{deviceKey}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/device/heartbeat",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"swVersion\": \"1.0.0\",\n  \"uptimeS\": 120,\n  \"cameras\": [{ \"cameraId\": \"{{cameraId}}\", \"state\": \"ok\" }]\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Camera online again",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/cameras/{{cameraId}}",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"online\", () => pm.expect(json.status === \"online\").to.be.true);"
+        ]
+       }
+      },
+      {
+       "listen": "prerequest",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "// gives the background job time to run before this request is sent",
+         "setTimeout(() => {}, 1000);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Run now: partitions",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{adminToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/dev/tasks/partitions",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Run now: retention",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{adminToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/dev/tasks/retention",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Unknown task - 400",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{adminToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/dev/tasks/make-coffee",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 400\", () => pm.response.to.have.status(400));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "A customer cannot run tasks - 403",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/dev/tasks/retention",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 403\", () => pm.response.to.have.status(403));"
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "13 Reports and search",
+   "description": "Module owner: Musa (export, search), Iftekhar (summary).",
+   "item": [
+    {
+     "name": "Dashboard overview",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/overview",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"3 cameras\", () => pm.expect(json.cameras.length === 3).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Summary of the last 7 days",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/reports/summary?days=7",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"incidents counted\", () => pm.expect(json.incidents.total >= 3 && json.incidents.falseAlarms === 1).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Request a CSV export (built by a queue worker)",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/exports",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"reportType\": \"incidents\",\n  \"format\": \"csv\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"exportId\", json.id);",
+         "pm.test(\"queued\", () => pm.expect(json.status === \"queued\").to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Export is ready, with a download link",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/exports/{{exportId}}",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"exportUrl\", json.download.url);",
+         "pm.test(\"ready\", () => pm.expect(json.status === \"ready\").to.be.true);"
+        ]
+       }
+      },
+      {
+       "listen": "prerequest",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "// gives the background job time to run before this request is sent",
+         "setTimeout(() => {}, 2000);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Download the CSV",
+     "request": {
+      "method": "GET",
+      "header": [],
+      "url": "{{exportUrl}}",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"has a header row and data\", () => pm.expect(pm.response.text().includes(\"title\") && pm.response.text().split(\"\\n\").length >= 3).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Search",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/search?q=shed",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"camera and zone found\", () => pm.expect(json.cameras.length === 1 && json.zones.length === 1).to.be.true);"
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "14 Session security",
+   "description": "Module owner: Mahir. Last, because it logs people out. Shows sir's Redis blacklist, the device key revoke, two-factor login and \"log out everywhere\".",
+   "item": [
+    {
+     "name": "Revoke the device key",
+     "request": {
+      "method": "DELETE",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/sites/{{siteId}}/devices/{{deviceId}}/credentials/{{credentialId}}",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 204\", () => pm.response.to.have.status(204));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "The revoked key is refused at once - 401",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Device {{deviceKey}}"
+       }
+      ],
+      "url": "{{baseUrl}}/device/config",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 401\", () => pm.response.to.have.status(401));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Admin disables the guard account",
+     "request": {
+      "method": "PATCH",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{adminToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/admin/users/{{guardUserId}}",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"status\": \"disabled\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "The guard is out on his very next request - 401",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{guardToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/me",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 401\", () => pm.response.to.have.status(401));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Logout (the access token goes on the Redis blacklist)",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/auth/logout",
+      "description": "Show in redis-cli: KEYS bl:*  and  TTL bl:<jti>  (it disappears when the token would have expired anyway)",
+      "body": {
+       "mode": "raw",
+       "raw": "{}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 204\", () => pm.response.to.have.status(204));"
+        ]
+       }
+      },
+      {
+       "listen": "prerequest",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.collectionVariables.set(\"oldAccessToken\", pm.collectionVariables.get(\"accessToken\"));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "The logged-out token - 401",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{oldAccessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/me",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 401\", () => pm.response.to.have.status(401));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Login again",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/auth/login",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"email\": \"{{ownerEmail}}\",\n  \"password\": \"{{ownerPassword}}\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"accessToken\", json.accessToken);",
+         "pm.collectionVariables.set(\"refreshToken\", json.refreshToken);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Turn on two-factor login",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/auth/2fa/enable",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"password\": \"{{ownerPassword}}\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Login now asks for a code",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/auth/login",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"email\": \"{{ownerEmail}}\",\n  \"password\": \"{{ownerPassword}}\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"challengeToken\", json.challengeToken);",
+         "pm.collectionVariables.set(\"twoFactorCode\", json.devCode);",
+         "pm.test(\"no tokens yet\", () => pm.expect(json.twoFactorRequired === true && json.accessToken === undefined).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Wrong code - 400",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/auth/2fa/verify",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"challengeToken\": \"{{challengeToken}}\",\n  \"code\": \"000000\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 400\", () => pm.response.to.have.status(400));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Right code -> tokens",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/auth/2fa/verify",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"challengeToken\": \"{{challengeToken}}\",\n  \"code\": \"{{twoFactorCode}}\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"accessToken\", json.accessToken);",
+         "pm.test(\"logged in\", () => pm.expect(!!json.accessToken).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Log out everywhere",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{accessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/auth/logout-all",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 204\", () => pm.response.to.have.status(204));"
+        ]
+       }
+      },
+      {
+       "listen": "prerequest",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.collectionVariables.set(\"oldAccessToken\", pm.collectionVariables.get(\"accessToken\"));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Every old token is dead - 401",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Authorization",
+        "value": "Bearer {{oldAccessToken}}"
+       }
+      ],
+      "url": "{{baseUrl}}/me",
+      "description": ""
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 401\", () => pm.response.to.have.status(401));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Forgot password (always 202)",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/auth/password/forgot",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"email\": \"{{ownerEmail}}\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.collectionVariables.set(\"resetCode\", json.devCode);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Forgot password for an unknown email (same answer)",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/auth/password/forgot",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"email\": \"nobody@nowhere.com\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+         "let json = {}; try { json = pm.response.json(); } catch (e) {}",
+         "pm.test(\"no code leaked\", () => pm.expect(json.devCode === undefined).to.be.true);"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "Reset the password",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/auth/password/reset",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"email\": \"{{ownerEmail}}\",\n  \"code\": \"{{resetCode}}\",\n  \"newPassword\": \"NewPassw0rd!demo\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "The old password no longer works - 401",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       }
+      ],
+      "url": "{{baseUrl}}/auth/login",
+      "description": "",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"email\": \"{{ownerEmail}}\",\n  \"password\": \"{{ownerPassword}}\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test(\"status is 401\", () => pm.response.to.have.status(401));"
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "variable": [
+  {
+   "key": "ownerEmail",
+   "value": ""
+  },
+  {
+   "key": "ownerPassword",
+   "value": ""
+  },
+  {
+   "key": "accessToken",
+   "value": ""
+  },
+  {
+   "key": "refreshToken",
+   "value": ""
+  },
+  {
+   "key": "siteId",
+   "value": ""
+  },
+  {
+   "key": "areaId",
+   "value": ""
+  },
+  {
+   "key": "cameraId",
+   "value": ""
+  },
+  {
+   "key": "zoneId",
+   "value": ""
+  },
+  {
+   "key": "ruleId",
+   "value": ""
+  },
+  {
+   "key": "deviceKey",
+   "value": ""
+  },
+  {
+   "key": "incidentId",
+   "value": ""
+  },
+  {
+   "key": "alertId",
+   "value": ""
+  },
+  {
+   "key": "readingsBody",
+   "value": ""
+  },
+  {
+   "key": "simBase",
+   "value": ""
+  },
+  {
+   "key": "seq",
+   "value": ""
+  }
+ ]
+}
